@@ -1,0 +1,309 @@
+using UnityEngine;
+
+public class HeadAnimationControler : MonoBehaviour
+{
+    public BossHealth bossHealth;
+    public GameObject Boss;
+    public Animator animator;
+    public GameObject Head;
+
+    void Start()
+    {
+        animator = GetComponent<Animator>();
+    }
+
+    void Update()
+    {
+        if (!bossHealth.isDead)
+        {
+            IsAngry();
+        }
+
+        if (bossHealth.isDead)
+        {
+            animator.SetBool("Dead", true);
+            Debug.Log("Head is dead");
+        }
+    }
+
+    void IsAngry()
+    {
+        if (bossHealth.currentHealth <= 75)
+        {
+            animator.SetBool("Angry", true);
+            Debug.Log("Boss is angry");
+        }
+    }
+
+    public void DestroyHead()
+    {
+        Destroy(Head);
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class BossAttacksManager : MonoBehaviour
+{
+    public BombsAttack BombsAttack;
+    public LasersAttack LasersAttack;
+    public BulletBossAttack BulletBossAttack;
+    public EnemySpawnAttack EnemySpawnAttack;
+
+    public int Attacks = 1;
+    public int Attacks2 = 5;
+    private int AttackNumber;
+    private bool isAttacking = false;
+    public bool playerDetected = false; 
+    public BossHealth bossHealth;
+    private float attacksCooldown;
+
+    private Coroutine currentAttackCoroutine;
+
+    private void Start()
+    {
+        attacksCooldown = 4;
+    }
+    void Udpate()
+    {
+        if (bossHealth.currentHealth >= 75)
+        {
+            attacksCooldown = 3;
+        }
+    }
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player") && !playerDetected && bossHealth.currentHealth > 0)
+        {
+            playerDetected = true;
+            StartCoroutine(StartAttacksWithDelay());
+        }
+    }
+
+    private IEnumerator StartAttacksWithDelay()
+    {
+        yield return new WaitForSeconds(2f); // Initial delay before starting attacks
+
+        if (bossHealth.currentHealth > 0) // Check if the boss is still alive
+        {
+            StartNewAttack();
+        }
+    }
+
+    public int RandomNumberGenerator()
+    {
+        return Random.Range(Attacks, Attacks2); // Random attack type
+    }
+
+    public void StartNewAttack()
+    {
+        if (isAttacking || bossHealth.currentHealth <= 0) return; // Prevent multiple attacks or attacks if boss is dead
+
+        isAttacking = true;
+        AttackNumber = RandomNumberGenerator();
+
+        if (currentAttackCoroutine != null)
+        {
+            StopCoroutine(currentAttackCoroutine);
+        }
+
+        switch (AttackNumber)
+        {
+            case 1:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(BombsAttack.StartBombsAttack));
+                break;
+            case 2:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(LasersAttack.StartLaser));
+                break;
+            case 3:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(BulletBossAttack.StartBulletAttack));
+                break;
+            case 4:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(EnemySpawnAttack.StartEnemySpawn));
+                break;
+        }
+    }
+
+    private IEnumerator ExecuteAttack(System.Action attackAction)
+    {
+        attackAction.Invoke();
+        yield return new WaitForSeconds(attacksCooldown); // Cooldown between attacks
+        isAttacking = false;
+
+        if (bossHealth.currentHealth > 0) // Continue attacking if the boss is alive
+        {
+            StartNewAttack();
+        }
+    }
+}using UnityEngine;
+
+public class BombsAttack : MonoBehaviour
+{
+    public string bombPointTag = "BombPoint";
+    public GameObject bombPrefab;
+    public int minBombs = 3;
+    public int maxBombs = 6;
+    public float minDelay = 0.05f;
+    public float maxDelay = 0.2f;
+    public BossAttacksManager bossAttacksManager;
+    private Transform[] bombPoints;
+    private float NewAttackDelay = 4f;
+    public BossHealth bossHealth;
+
+    private Coroutine currentCoroutine;
+
+    void Start()
+    {
+        GameObject[] points = GameObject.FindGameObjectsWithTag(bombPointTag);
+        bombPoints = new Transform[points.Length];
+        for (int i = 0; i < points.Length; i++)
+        {
+            bombPoints[i] = points[i].transform;
+        }
+    }
+    public void StartBombsAttack()
+    {
+        if (bossHealth.currentHealth > 0) // Check boss health
+        {
+            if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+            currentCoroutine = StartCoroutine(ActivateBombs());
+        }
+    }
+    public System.Collections.IEnumerator ActivateBombs()
+    {
+        int bombsToSpawn = Random.Range(minBombs, maxBombs + 1);
+        int spawnCount = Mathf.Min(bombsToSpawn, bombPoints.Length);
+
+        Transform[] selectedPoints = SelectRandomPoints(spawnCount);
+        System.Collections.Generic.List<GameObject> spawnedBombs = new();
+
+        foreach (Transform point in selectedPoints)
+        {
+            GameObject bomb = Instantiate(bombPrefab, point.position, Quaternion.identity);
+            spawnedBombs.Add(bomb);
+            float randomDelay = Random.Range(minDelay, maxDelay);
+            yield return new WaitForSeconds(randomDelay);
+        }
+
+        yield return new WaitForSeconds(1.5f);
+
+        foreach (GameObject bomb in spawnedBombs)
+        {
+            if (bomb != null)
+            {
+                BombScript script = bomb.GetComponent<BombScript>();
+                if (script != null)
+                {
+                    script.CountingDown();
+                }
+            }
+        }
+        yield return new WaitForSeconds(NewAttackDelay);
+        bossAttacksManager.StartNewAttack();
+    }
+    private Transform[] SelectRandomPoints(int count)
+    {
+        System.Collections.Generic.List<Transform> availablePoints = new System.Collections.Generic.List<Transform>(bombPoints);
+        Transform[] selectedPoints = new Transform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = Random.Range(0, availablePoints.Count);
+            selectedPoints[i] = availablePoints[index];
+            availablePoints.RemoveAt(index);
+        }
+
+        return selectedPoints;
+    }
+}using UnityEngine;
+using UnityEngine.Tilemaps;
+
+public class BossBattle : MonoBehaviour
+{
+    public BossHealth bossHealth;
+    public Dialogue dialogue;
+    public GameObject tileMap;
+    public BossAttacksManager bossAttacksManager;
+    public GameObject NPCDead;
+    public GameObject NPC;
+    private void Start()
+    {
+        tileMap.gameObject.SetActive(false);
+        NPCDead.SetActive(false);
+    }
+    void Update()
+    {
+        if (bossHealth.currentHealth <= 0)
+        {
+            tileMap.gameObject.SetActive(false);
+        }
+        else if (dialogue.BossDialogue == true && (bossHealth.currentHealth <= 0))
+        {
+            NPCDead.SetActive(true);
+        }
+        else if (bossAttacksManager.playerDetected == true)
+        {
+            NPC.SetActive(false);
+            tileMap.gameObject.SetActive(true);
+            NPCDead.SetActive(true);
+        }
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class LasersAttack : MonoBehaviour
+{
+    public GameObject laserPrefab;  // Prefab del láser
+    public Transform[] laserPoints; // Puntos donde pueden aparecer los láseres
+    public int minLasers = 3;   // Mínimo de láseres que pueden aparecer
+    public int maxLasers = 6;   // Máximo de láseres que pueden aparecer
+    public float minDelay = 0.05f; // Tiempo mínimo de delay
+    public float maxDelay = 0.2f;  // Tiempo máximo de delay
+    public BossAttacksManager bossAttacksManager;
+    public BossHealth bossHealth;
+
+    private Coroutine currentCoroutine;
+
+    public void StartLaser()
+    {
+        if (bossHealth.currentHealth > 0) // Check boss health
+        {
+            if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+            currentCoroutine = StartCoroutine(ActivateLasers());
+        }
+    }
+
+    private IEnumerator ActivateLasers()
+    {
+        int lasersToSpawn = Random.Range(minLasers, maxLasers + 1);
+        int spawnCount = Mathf.Min(lasersToSpawn, laserPoints.Length);
+
+        Transform[] selectedPoints = SelectRandomPoints(spawnCount);
+
+        foreach (Transform point in selectedPoints)
+        {
+            GameObject laser = Instantiate(laserPrefab, point.position, Quaternion.identity);
+            float randomDelay = Random.Range(minDelay, maxDelay);
+            yield return new WaitForSeconds(randomDelay);
+        }
+
+        yield return new WaitForSeconds(4f); // Cooldown
+        bossAttacksManager.StartNewAttack();
+    }
+
+    private Transform[] SelectRandomPoints(int count)
+    {
+        System.Collections.Generic.List<Transform> availablePoints = new System.Collections.Generic.List<Transform>(laserPoints);
+        Transform[] selectedPoints = new Transform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = Random.Range(0, availablePoints.Count);
+            selectedPoints[i] = availablePoints[index];
+            availablePoints.RemoveAt(index);
+        }
+
+        return selectedPoints;
+    }
+}

@@ -1,0 +1,608 @@
+using UnityEngine;
+
+[ExecuteInEditMode]
+public class ParallaxCamera : MonoBehaviour
+{
+    public delegate void ParallaxCameraDelegate(float deltaMovement);
+    public ParallaxCameraDelegate onCameraTranslate;
+
+    private float oldPosition;
+
+    void Start()
+    {
+        oldPosition = transform.position.x;
+    }
+
+    void Update()
+    {
+        if (transform.position.x != oldPosition)
+        {
+            if (onCameraTranslate != null)
+            {
+                float delta = oldPosition - transform.position.x;
+                onCameraTranslate(delta);
+            }
+
+            oldPosition = transform.position.x;
+        }
+    }
+}using System.Collections.Generic;
+using UnityEngine;
+
+[ExecuteInEditMode]
+public class ParallaxBackground : MonoBehaviour
+{
+    public ParallaxCamera parallaxCamera;
+    List<ParallaxLayer> parallaxLayers = new List<ParallaxLayer>();
+
+    void Start()
+    {
+        if (parallaxCamera == null)
+            parallaxCamera = Camera.main.GetComponent<ParallaxCamera>();
+
+        if (parallaxCamera != null)
+            parallaxCamera.onCameraTranslate += Move;
+
+        SetLayers();
+    }
+
+    void SetLayers()
+    {
+        parallaxLayers.Clear();
+
+        for (int i = 0; i < transform.childCount; i++)
+        {
+            ParallaxLayer layer = transform.GetChild(i).GetComponent<ParallaxLayer>();
+
+            if (layer != null)
+            {
+                layer.name = "Layer-" + i;
+                parallaxLayers.Add(layer);
+            }
+        }
+    }
+
+    void Move(float delta)
+    {
+        foreach (ParallaxLayer layer in parallaxLayers)
+        {
+            layer.Move(delta);
+        }
+    }
+}using UnityEngine;
+
+[ExecuteInEditMode]
+public class ParallaxLayer : MonoBehaviour
+{
+    public float parallaxFactor;
+
+    public void Move(float delta)
+    {
+        Vector3 newPos = transform.localPosition;
+        newPos.x -= delta * parallaxFactor;
+
+        transform.localPosition = newPos;
+    }
+}using System.Collections;
+using UnityEngine;
+
+public class EnemyHealth : MonoBehaviour
+{
+    public int maxHealth = 3;
+    public int currentHealth = 3;
+    public Animator animator;
+    private Grunt grunt;
+    public float hurtAnimationTime = 0.5f;
+
+    void Start()
+    {
+        currentHealth = Mathf.Max(currentHealth, maxHealth);
+        grunt = GetComponent<Grunt>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Enemy Health: " + currentHealth);
+        StartCoroutine(HurtSequence());
+
+        if (currentHealth == 0)
+        {
+            StartCoroutine(Die());
+        }
+    }
+    private IEnumerator Die()
+    {
+        StartCoroutine(HurtSequence());
+        yield return new WaitForSeconds(0.2f);
+        if (grunt != null)
+            grunt.enabled = false;
+        animator.SetBool("isDead", true);
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        Time.timeScale = 0f;
+        yield return new WaitForSecondsRealtime(0.05f);
+        Time.timeScale = 1f;
+        yield return new WaitForSecondsRealtime(0.15f);
+        animator.SetBool("hurt", false);
+    }
+    public void DestroyEnemy() => Destroy(gameObject);
+}
+using UnityEngine;
+
+public class Grunt : MonoBehaviour
+{
+    public GameObject Player;
+    public GameObject BulletGruntPrefab;
+    public Transform firePoint;
+
+    private float LastShoot;
+
+    void Update()
+    {
+        HandleOrientation();
+        HandleShooting();
+    }
+
+    private void HandleOrientation()
+    {
+        Vector3 direction = Player.transform.position - transform.position;
+        transform.localScale = direction.x >= 0 ? Vector3.one : new Vector3(-1.0f, 1.0f, 1.0f);
+    }
+
+    private void HandleShooting()
+    {
+        float distance = Mathf.Abs(Player.transform.position.x - transform.position.x);
+
+        if (distance < 2.0f && Time.time > LastShoot + 1.0f)
+        {
+            Shoot();
+            LastShoot = Time.time;
+        }
+    }
+    private void Shoot()
+    {
+        Vector2 direction = transform.localScale.x == 1.0f ? Vector2.right : Vector2.left;
+        GameObject bulletgrunt = Instantiate(BulletGruntPrefab, firePoint.position, Quaternion.identity);
+        bulletgrunt.GetComponent<Bullet>().SetDirection(direction);
+    }
+}
+
+using UnityEngine;
+
+public class SlimeControl : MonoBehaviour
+{
+    public float Velocity = 5f;
+    private Rigidbody2D rb;
+    private int direction = -1; // -1 = izquierda, 1 = derecha
+
+    void Start()
+    {
+        rb = GetComponent<Rigidbody2D>();
+        if (rb == null)
+        {
+            Debug.LogError("Rigidbody2D no encontrado.");
+        }
+    }
+
+    void Update()
+    {
+        Move();
+    }
+
+    private void Move()
+    {
+        // Mueve al slime en la dirección correspondiente (izquierda o derecha)
+        rb.linearVelocity = new Vector2(direction * Velocity, rb.linearVelocity.y);
+
+        // Cambia la dirección del sprite según el valor de 'direction'
+        if (direction == -1)
+        {
+            transform.localScale = new Vector3(1.0f, 1.0f, 1.0f); // Mirar hacia la derecha
+        }
+        else
+        {
+            transform.localScale = new Vector3(-1.0f, 1.0f, 1.0f); // Mirar hacia la izquierda
+        }
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        // Solo cambia dirección si choca con algo relevante
+        if (collision.CompareTag("Obstacle") ||
+            collision.CompareTag("Enemy") || collision.CompareTag("Boss") || collision.CompareTag("Collisioner") ||
+            collision.CompareTag("Mage"))
+        {
+            direction *= -1; // Invierte la dirección (izquierda/derecha)
+        }
+        if (collision.CompareTag("Player"))
+        {
+            collision.GetComponent<PlayerHealth>()?.TakeDamage(1);
+            direction *= -1;
+        }
+    }
+}
+
+using UnityEngine;
+using static Unity.Collections.Unicode;
+using System.Collections;
+
+public class SlimeHealth : MonoBehaviour
+{
+    public int maxHealth = 3;
+    public int currentHealth = 3;
+    public Animator animator;
+    public SlimeControl slime;
+    private Rigidbody2D rb;
+
+    void Start()
+    {
+        currentHealth = Mathf.Max(currentHealth, maxHealth);
+        slime = GetComponent<SlimeControl>();
+        rb = GetComponent<Rigidbody2D>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        StartCoroutine(HurtSequence());
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Slime Health: " + currentHealth);
+
+        if (currentHealth == 0)
+        {
+            StartCoroutine(Die());
+        }
+    }
+    private IEnumerator Die()
+    {
+        StartCoroutine(HurtSequence());
+        yield return new WaitForSeconds(0.2f);
+        rb.bodyType = RigidbodyType2D.Static;
+        animator.SetBool("die", true);
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        Time.timeScale = 0f;
+        slime.Velocity = 0f;
+        yield return new WaitForSecondsRealtime(0.05f);
+        Time.timeScale = 1f;
+        yield return new WaitForSecondsRealtime(0.15f);
+        animator.SetBool("hurt", false);
+        slime.Velocity = 0.5f;
+    }
+
+    public void DestroyEnemy() => Destroy(gameObject);
+}
+
+using UnityEngine;
+using System.Collections;
+
+public class EnemySpawnAttack : MonoBehaviour
+{
+    public GameObject enemyPrefab;
+    public Transform[] enemyPoints;
+    public int minEnemy = 3;
+    public int maxEnemy = 6;
+    public float minDelay = 0.05f;
+    public float maxDelay = 0.2f;
+    public BossAttacksManager bossAttacksManager;
+    public BossHealth bossHealth;
+
+    private Coroutine currentCoroutine;
+
+    public void StartEnemySpawn()
+    {
+        if (bossHealth.currentHealth > 0) // Check boss health
+        {
+            if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+            currentCoroutine = StartCoroutine(SpawnEnemies());
+        }
+    }
+
+    private IEnumerator SpawnEnemies()
+    {
+        int enemiesToSpawn = Random.Range(minEnemy, maxEnemy + 1);
+        int spawnCount = Mathf.Min(enemiesToSpawn, enemyPoints.Length);
+
+        Transform[] selectedPoints = SelectRandomPoints(spawnCount);
+
+        foreach (Transform point in selectedPoints)
+        {
+            GameObject enemy = Instantiate(enemyPrefab, point.position, Quaternion.identity);
+            float randomDelay = Random.Range(minDelay, maxDelay);
+            yield return new WaitForSeconds(randomDelay);
+        }
+
+        yield return new WaitForSeconds(4f); // Cooldown
+        bossAttacksManager.StartNewAttack();
+    }
+
+    private Transform[] SelectRandomPoints(int count)
+    {
+        System.Collections.Generic.List<Transform> availablePoints = new System.Collections.Generic.List<Transform>(enemyPoints);
+        Transform[] selectedPoints = new Transform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = Random.Range(0, availablePoints.Count);
+            selectedPoints[i] = availablePoints[index];
+            availablePoints.RemoveAt(index);
+        }
+
+        return selectedPoints;
+    }
+}using UnityEngine;
+
+public class Mage : MonoBehaviour
+{
+    [Header("Configuración")]
+    public GameObject bulletPrefab;
+    public Transform firePoint;
+    public float fireCooldown = 2f;
+    public int damage = 1;
+    private float lastShootTime;
+    private Transform playerTarget;
+
+    void Start()
+    {
+        playerTarget = GameObject.FindGameObjectWithTag("Player")?.transform;
+    }
+
+    void Update()
+    {
+        if (playerTarget == null) return;
+
+        HandleRotation();
+
+        if (Time.time >= lastShootTime + fireCooldown)
+        {
+            Shoot();
+            lastShootTime = Time.time;
+        }
+    }
+
+    void HandleRotation()
+    {
+        Vector3 direction = playerTarget.position - transform.position;
+        transform.localScale = new Vector3(
+            Mathf.Sign(direction.x),
+            1f,
+            1f
+        );
+    }
+
+    void Shoot()
+    {
+        GameObject bullet = Instantiate(bulletPrefab, firePoint.position, Quaternion.identity);
+        MageBullet homing = bullet.GetComponent<MageBullet>();
+
+        if (homing != null)
+        {
+            homing.target = playerTarget;
+        }
+    }
+
+}using UnityEngine;
+using System.Collections;
+public class MageHealth : MonoBehaviour
+{
+    public int maxHealth = 5;
+    public int currentHealth = 5;
+    public Animator animator;
+    public Mage mage;
+
+    void Start()
+    {
+        currentHealth = Mathf.Max(currentHealth, maxHealth);
+        mage = GetComponent<Mage>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Mage Health: " + currentHealth);
+        StartCoroutine(HurtSequence());
+
+        if (currentHealth == 0)
+        {
+            StartCoroutine(Die());
+        }
+    }
+
+    private IEnumerator Die()
+    {
+        StartCoroutine(HurtSequence());
+        yield return new WaitForSeconds(0.2f);
+        if (mage != null)
+        mage.enabled = false;
+        animator.SetBool("isDead", true);
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        Time.timeScale = 0f;
+        yield return new WaitForSecondsRealtime(0.05f);
+        Time.timeScale = 1f;
+        yield return new WaitForSecondsRealtime(0.15f);
+        animator.SetBool("hurt", false);
+    }
+    public void DestroyMage() => Destroy(gameObject);
+}
+using UnityEngine;
+
+public class Mage : MonoBehaviour
+{
+    [Header("Configuración")]
+    public GameObject bulletPrefab;
+    public Transform firePoint;
+    public float fireCooldown = 2f;
+    public int damage = 1;
+    private float lastShootTime;
+    private Transform playerTarget;
+
+    void Start()
+    {
+        playerTarget = GameObject.FindGameObjectWithTag("Player")?.transform;
+    }
+
+    void Update()
+    {
+        if (playerTarget == null) return;
+
+        HandleRotation();
+
+        if (Time.time >= lastShootTime + fireCooldown)
+        {
+            Shoot();
+            lastShootTime = Time.time;
+        }
+    }
+
+    void HandleRotation()
+    {
+        Vector3 direction = playerTarget.position - transform.position;
+        transform.localScale = new Vector3(
+            Mathf.Sign(direction.x),
+            1f,
+            1f
+        );
+    }
+
+    void Shoot()
+    {
+        GameObject bullet = Instantiate(bulletPrefab, firePoint.position, Quaternion.identity);
+        MageBullet homing = bullet.GetComponent<MageBullet>();
+
+        if (homing != null)
+        {
+            homing.target = playerTarget;
+        }
+    }
+
+}using UnityEngine;
+
+public class DamageCollision : MonoBehaviour
+{
+    public int damage = 1;
+    public float damageCooldown = 1f;
+    private float nextDamageTime = 0f;
+
+    private void OnCollisionStay2D(Collision2D collision)
+    {
+        if (!this.enabled) return;
+
+        if (collision.collider.CompareTag("Player"))
+        {
+            if (Time.time >= nextDamageTime)
+            {
+                collision.collider.GetComponent<PlayerHealth>()?.TakeDamage(damage);
+                Debug.Log("Daño aplicado al jugador (Stay)");
+                nextDamageTime = Time.time + damageCooldown;
+            }
+        }
+    }
+
+    private void OnCollisionEnter2D(Collision2D collision)
+    {
+        if (!this.enabled) return;
+
+        if (collision.collider.CompareTag("Player"))
+        {
+            if (Time.time >= nextDamageTime)
+            {
+                collision.collider.GetComponent<PlayerHealth>()?.TakeDamage(damage);
+                Debug.Log("Daño aplicado al jugador (Enter)");
+                nextDamageTime = Time.time + damageCooldown;
+            }
+        }
+    }
+}
+using UnityEngine;
+using Unity.Cinemachine;
+using System.Collections;
+public class BossHealth : MonoBehaviour
+{
+    public Rigidbody2D rb;
+    public int maxHealth = 150;
+    public int currentHealth = 150;
+    public Animator animator;
+    public DialogueBoss dialogueBoss;
+    public bool waitingToDie = false;
+    public bool isDead = false;
+    public Dialogue dialogue;
+    private CinemachineImpulseSource impulseSource;
+    private Vector3 direction;
+    public Animator headAnimator;
+
+    void Start()
+    {
+        currentHealth = Mathf.Min(currentHealth, maxHealth);
+        rb = GetComponent<Rigidbody2D>();
+        impulseSource = GetComponent<CinemachineImpulseSource>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        if (isDead) return;
+
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Boss Health: " + currentHealth);
+        StartCoroutine(HurtSequence());
+        if (currentHealth == 0)
+        {
+            if (dialogue.BossDialogue == true)
+            {
+                if (dialogueBoss != null && !dialogueBoss.didDialogueStart)
+                {
+                    Debug.Log("Boss is dead, starting dialogue");
+                    dialogueBoss.StartDialogue();
+                    waitingToDie = true;
+                }
+                else if (!waitingToDie)
+                {
+                    Debug.Log("Dialogue is finish");
+                    Die();
+                }
+            }
+            else
+            {
+                Debug.Log("Boss is dead, no dialogue");
+                Die();
+            }
+        }
+    }
+
+    public void Die()
+    {
+        direction = new Vector3(1, 1, 1);
+        if (isDead) return;
+        animator.updateMode = AnimatorUpdateMode.UnscaledTime;
+        isDead = true;
+        rb.bodyType = RigidbodyType2D.Static;
+        animator.SetBool("Dead", true);
+        Debug.Log("Boss is dead");
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        headAnimator.SetBool("hurt", true);
+        yield return null;
+        animator.SetBool("hurt", false);
+        headAnimator.SetBool("hurt", false);
+    }
+    private void DieShake()
+    {
+        ScreenShakeManager.instance.TriggerShake(impulseSource, direction, 0.15f);
+    }
+    public void DestroyBoss()
+    {
+        Destroy(gameObject);
+    }
+}

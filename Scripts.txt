@@ -1,0 +1,2793 @@
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+public class LevelPass : MonoBehaviour
+{
+    public string NextLevel;
+    public Rigidbody2D rb;
+    public float rotationSpeed = 1f;
+
+    void Start()
+    {
+        rb = GetComponent<Rigidbody2D>();
+    }
+
+    void FixedUpdate()
+    {
+        Vector3 rotation = transform.rotation.eulerAngles;
+        rotation.y += rotationSpeed;
+        transform.rotation = Quaternion.Euler(rotation);
+    }
+
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            ModeSelector();
+            SceneManager.LoadScene(NextLevel);
+
+            // Guardamos la escena actual como la última escena jugada
+            PlayerPrefs.SetString("LastLevel", SceneManager.GetActiveScene().name);
+            PlayerPrefs.Save();
+        }
+    }
+
+    private void ModeSelector()
+    {
+        if (SceneManager.GetActiveScene().name == "Level 2")
+        {
+            PlayerPrefs.SetInt("Level2Unlocked", 1);
+            PlayerPrefs.Save();
+        }
+        else if (SceneManager.GetActiveScene().name == "Level 3")
+        {
+            PlayerPrefs.SetInt("Level3unlocked", 1);
+            PlayerPrefs.Save();
+        }
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class BulletBossAttack : MonoBehaviour
+{
+    public GameObject bulletPrefab;  // Prefab del láser
+    public Transform[] bulletPoints; // Puntos donde pueden aparecer los láseres
+    public int minBullet = 3;   // Mínimo de láseres que pueden aparecer
+    public int maxBullet = 6;   // Máximo de láseres que pueden aparecer
+    public float minDelay = 0.05f; // Tiempo mínimo de delay
+    public float maxDelay = 0.2f;  // Tiempo máximo de delay
+    public BossAttacksManager bossAttacksManager;
+    public BossHealth bossHealth;
+
+    private Coroutine currentCoroutine;
+
+    public void StartBulletAttack()
+    {
+        if (bossHealth.currentHealth > 0) // Check boss health
+        {
+            if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+            currentCoroutine = StartCoroutine(SpawnBullet());
+        }
+    }
+
+    private IEnumerator SpawnBullet()
+    {
+        int bulletsToSpawn = Random.Range(minBullet, maxBullet + 1);
+        int spawnCount = Mathf.Min(bulletsToSpawn, bulletPoints.Length);
+
+        Transform[] selectedPoints = SelectRandomPoints(spawnCount);
+
+        foreach (Transform point in selectedPoints)
+        {
+            GameObject bullet = Instantiate(bulletPrefab, point.position, Quaternion.identity);
+            float randomDelay = Random.Range(minDelay, maxDelay);
+            yield return new WaitForSeconds(randomDelay);
+        }
+
+        yield return new WaitForSeconds(4f); // Cooldown
+        bossAttacksManager.StartNewAttack();
+    }
+
+    private Transform[] SelectRandomPoints(int count)
+    {
+        System.Collections.Generic.List<Transform> availablePoints = new System.Collections.Generic.List<Transform>(bulletPoints);
+        Transform[] selectedPoints = new Transform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = Random.Range(0, availablePoints.Count);
+            selectedPoints[i] = availablePoints[index];
+            availablePoints.RemoveAt(index);
+        }
+
+        return selectedPoints;
+    }
+}using Unity.Cinemachine;
+using UnityEngine;
+
+public class PlayerController : MonoBehaviour
+{
+    // Private
+    private Rigidbody2D rb;
+    private Animator animator;
+    private float LastShoot;
+    private float escaleGravity;
+    private bool jumpButtonUp = true;
+    private CinemachineImpulseSource impulseSource;
+    private bool isJumping = false;
+
+    //Serialized
+    [SerializeField] private float gravityMultiplier;
+    [Range(0, 1)][SerializeField] private float multiplicationCancelJump;
+    [SerializeField] private GameObject runParticles;
+
+
+    // Public
+    public float speed = 5f;
+    public float jumpForce = 5f;
+    public GameObject BulletPrefab;
+    public bool playerHasGun;
+    public float shootCooldown = 0.65f;
+    public bool grounded;
+    public PlayerHealth playerHealth;
+    public float jumpSpeedBoost = 5;
+    public float TimeScale = 1f;
+    public float CoyoteTimeCounter;
+
+    void Start()
+    {
+        // Get Component
+        rb = GetComponent<Rigidbody2D>();
+        animator = GetComponent<Animator>();
+        escaleGravity = rb.gravityScale;
+    }
+
+    void Update()
+    {
+        if (PlayerPrefs.GetInt("HasGun") == 1)
+        {
+            playerHasGun = true;
+        }
+        // Dead Check
+        if (playerHealth != null && playerHealth.IsDead())
+        {
+            return;
+        }
+        impulseSource = GetComponent<CinemachineImpulseSource>();
+
+        // Movement System
+        HandleMovement();
+
+        // Raycast System
+        CheckGrounded();
+
+        // Jump System
+        HandleJump();
+
+        // Animator Running System
+        UpdateAnimatorRunning();
+
+        // Orientation System
+        UpdateOrientation();
+
+        // Shoot System
+        HandleShooting();
+
+        // Wall Collision
+        HandleWallCollision();
+    }
+
+    void FixedUpdate()
+    {
+        if (rb.linearVelocity.y >= 0.2 && !grounded && CoyoteTimeCounter >= 0.1f)
+        {
+            if (Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.D))
+            {
+                float direction = Mathf.Sign(transform.localScale.x);
+                rb.AddForce(new Vector2(direction * jumpSpeedBoost, 0), ForceMode2D.Impulse);
+                Debug.Log("Jump Speed Boost");
+                grounded = false;
+            }
+            grounded = false;
+        }
+        else if (rb.linearVelocity.y < 0 && !grounded)
+        {
+            rb.gravityScale = escaleGravity * gravityMultiplier;
+            grounded = false;
+        }
+        else
+        {
+            rb.gravityScale = escaleGravity;
+        }
+    }
+
+    // Movement System
+    private void HandleMovement()
+    {
+        float horizontal = Input.GetAxisRaw("Horizontal");
+        rb.linearVelocity = new Vector2(horizontal * speed, rb.linearVelocity.y);
+    }
+
+    // Raycast System
+    private void CheckGrounded()
+    {
+        float rayLength = 0.15f;
+
+        Vector2 centerOrigin = new Vector2(transform.position.x - 0.01f, transform.position.y);
+        Vector2 leftOrigin = new Vector2(transform.position.x - 0.06f, transform.position.y);
+        Vector2 rightOrigin = new Vector2(transform.position.x + 0.04f, transform.position.y);
+
+        RaycastHit2D hitCenter = Physics2D.Raycast(centerOrigin, Vector2.down, rayLength);
+        RaycastHit2D hitLeft = Physics2D.Raycast(leftOrigin, Vector2.down, rayLength);
+        RaycastHit2D hitRight = Physics2D.Raycast(rightOrigin, Vector2.down, rayLength);
+
+        bool isGrounded = false;
+        RaycastHit2D hitToCheck = new RaycastHit2D();
+
+        if (hitCenter.collider != null)
+        {
+            isGrounded = true;
+            hitToCheck = hitCenter;
+        }
+        else if (hitLeft.collider != null)
+        {
+            isGrounded = true;
+            hitToCheck = hitLeft;
+        }
+        else if (hitRight.collider != null)
+        {
+            isGrounded = true;
+            hitToCheck = hitRight;
+        }
+
+        if (isGrounded)
+        {
+            if (hitToCheck.collider.CompareTag("CheckPoint"))
+            {
+                grounded = false;
+            }
+            else
+            {
+                grounded = true;
+                isJumping = false;
+            }
+            CoyoteTimeCounter = 0;
+        }
+        else
+        {
+            grounded = false;
+            CoyoteTimeCounter += Time.deltaTime;
+        }
+    }
+
+
+    // Jump System
+    private void HandleJump()
+    {
+        if (Input.GetKey(KeyCode.W) && CoyoteTimeCounter < 0.1f && jumpButtonUp)
+        {
+            isJumping = true;
+            rb.AddForce(Vector2.up * jumpForce, ForceMode2D.Impulse);
+            jumpButtonUp = false;
+        }
+        else if (Input.GetKeyUp(KeyCode.W))
+        {
+            JumpButtonUp();
+        }
+    }
+
+    private void JumpButtonUp()
+    {
+        if (rb.linearVelocity.y > 0)
+        {
+            rb.AddForce(Vector2.down * rb.linearVelocity.y * (1 - multiplicationCancelJump), ForceMode2D.Impulse);
+        }
+        jumpButtonUp = true;
+    }
+
+    // Animator Running System
+    private void UpdateAnimatorRunning()
+    {
+        float horizontal = Input.GetAxisRaw("Horizontal");
+        animator.SetBool("running", horizontal != 0f);
+        if (horizontal != 0f && grounded == true)
+        {
+            if (!runParticles.activeSelf)
+                runParticles.SetActive(true);
+        }
+        else
+        {
+            if (runParticles.activeSelf)
+                runParticles.SetActive(false);
+        }
+    }
+
+    // Orientation System
+    private void UpdateOrientation()
+    {
+        float horizontal = Input.GetAxisRaw("Horizontal");
+        if (horizontal < 0.0f)
+            transform.localScale = new Vector3(-1.0f, 1.0f, 1.0f);
+        else if (horizontal > 0.0f)
+            transform.localScale = new Vector3(1.0f, 1.0f, 1.0f);
+    }
+
+    // Shoot System
+    private void HandleShooting()
+    {
+        if (Input.GetKey(KeyCode.Space) && Time.time > LastShoot + shootCooldown)
+        {
+            if (playerHasGun == true)
+            {
+                Shoot();
+                LastShoot = Time.time;
+            }
+        }
+    }
+
+    // Shoot function
+    private void Shoot()
+    {
+        ScreenShakeManager.instance.TriggerShake(impulseSource, Vector3.right, 0.015f);
+        Recoil(50f);
+        Vector2 direction = transform.localScale.x == 1.0f ? Vector2.right : Vector2.left;
+
+        GameObject bullet = Instantiate(BulletPrefab, transform.position + (Vector3)direction * 0.1f, Quaternion.identity);
+        bullet.GetComponent<Bullet>().SetDirection(direction);
+    }
+
+    // Wall Collision
+    private void HandleWallCollision()
+    {
+        WallCollision();
+    }
+
+    private void WallCollision()
+    {
+        float wallCheckDistance = 0.06f;
+        Vector2 direction = new Vector2(transform.localScale.x, 0);
+
+        Debug.DrawRay(transform.position, direction * wallCheckDistance, Color.red); // visual debug
+        RaycastHit2D hit = Physics2D.Raycast(transform.position, direction, wallCheckDistance);
+
+        if (hit.collider != null && hit.collider.CompareTag("Obstacle"))
+        {
+            rb.linearVelocity = new Vector2(0, rb.linearVelocity.y);
+            Debug.Log("Wall Collision");
+        }
+
+        Debug.DrawRay(transform.position, direction * wallCheckDistance, Color.yellow); // visual debug
+    }
+
+
+    // Función de retroceso (Recoil)
+    private void Recoil(float recoilForce)
+    {
+        Vector2 direction = transform.localScale.x == 1.0f ? Vector2.left : Vector2.right;
+
+        rb.AddForce(direction * recoilForce, ForceMode2D.Force);
+
+        Debug.Log("Recoil applied in direction: " + direction);
+    }
+}
+using UnityEngine;
+
+public class Heart : MonoBehaviour
+{
+    private PlayerHealth playerHealth;
+    public Rigidbody2D rb;
+    public float rotationSpeed = 1f;
+
+    void Start()
+    {
+        rb = GetComponent<Rigidbody2D>();
+        GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
+        if (playerObject != null)
+        {
+            playerHealth = playerObject.GetComponent<PlayerHealth>();
+        }
+    }
+
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player") && playerHealth != null)
+        {
+            if (playerHealth.GetCurrentHealth() < playerHealth.maxHealth)
+            {
+                playerHealth.Health();
+                Destroy(gameObject);
+            }
+            else
+            {
+                Debug.Log("Vida al máximo. No se recoge el corazón.");
+            }
+        }
+    }
+    void FixedUpdate()
+    {
+        Vector3 rotation = transform.rotation.eulerAngles;
+        rotation.y += rotationSpeed;
+        transform.rotation = Quaternion.Euler(rotation);
+    }
+}using UnityEngine;
+
+public class CheckPoints : MonoBehaviour
+{
+    public GameObject player;
+    public PlayerHealth Playerhealth;
+    private Transform ChekPointTransform;
+    public GameObject CheckPoint;
+    public GameDataManager gameDataManager;
+    void Start()
+    {
+        Playerhealth = player.GetComponent<PlayerHealth>();
+        ChekPointTransform = CheckPoint.transform;
+    }
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            Playerhealth.lastSafePosition = (ChekPointTransform);
+            Debug.Log("Última posición segura: " + ChekPointTransform);
+            gameDataManager.SaveData();
+        }
+    }
+}
+using UnityEngine;
+
+public class Spikes : MonoBehaviour
+{
+    public int damage = 1;
+    public float damageCooldown = 1f;
+    private float nextDamageTime = 0f;
+    private void OnTriggerStay2D(Collider2D collision)
+    {
+        if (!this.enabled) return;
+
+        if (collision.CompareTag("Player"))
+        {
+            if (Time.time >= nextDamageTime) // Si ya pasó el cooldown
+            {
+                collision.GetComponent<PlayerHealth>()?.TakeDamage(damage);
+                Debug.Log("Daño aplicado al jugador");
+                nextDamageTime = Time.time + damageCooldown; // Reiniciar el temporizador
+            }
+        }
+    }
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (!this.enabled) return;
+
+        if (collision.CompareTag("Player"))
+        {
+            if (Time.time >= nextDamageTime) // Si ya pasó el cooldown
+            {
+                collision.GetComponent<PlayerHealth>()?.TakeDamage(damage);
+                Debug.Log("Daño aplicado al jugador");
+                nextDamageTime = Time.time + damageCooldown; // Reiniciar el temporizador
+            }
+        }
+    }
+}
+
+using System.Collections;
+using Unity.Cinemachine;
+using UnityEngine;
+
+public class PlayerHealth : MonoBehaviour
+{
+    public int maxHealth = 6;
+    public int currentHealth;
+    public bool isInvulnerable = false;
+    private bool dead = false;
+    private Animator animator;
+    [SerializeField] private Rigidbody2D rb;
+    private BoxCollider2D boxCollider;
+    private CinemachineImpulseSource impulseSource;
+    private Vector3 direction;
+
+    public GameOver gameOverScript;
+    public float invulnerabilityTime = 1.5f;
+    public float blinkSpeed = 0.1f;
+    public PlayerController playerController;
+    public Transform lastSafePosition;
+    public GameObject bloodParticles;
+
+    void Start()
+    {
+        bloodParticles.SetActive(false);
+        isInvulnerable = false;
+        currentHealth = maxHealth;
+        animator = GetComponent<Animator>();
+        rb = GetComponent<Rigidbody2D>();
+        boxCollider = GetComponent<BoxCollider2D>();
+        GetComponent<PlayerController>();
+    }
+
+    void Update()
+    {
+        impulseSource = GetComponent<CinemachineImpulseSource>();
+        if (currentHealth <= 0 && !dead)
+            Death();
+    }
+
+    public void TakeDamage(int damage)
+    {
+        if (isInvulnerable) return;
+
+        currentHealth -= damage;
+        Debug.Log("Remaining health: " + currentHealth);
+
+        if (currentHealth <= 0)
+        {
+            currentHealth = 0;
+            Death();
+        }
+        else
+        {
+            StartCoroutine(HurtSequence());
+            StartCoroutine(HitStop());
+        }
+    }
+
+
+    private IEnumerator HurtSequence()
+    {
+        direction = new Vector3(1, 1, 0);
+        isInvulnerable = true;
+        rb.bodyType = RigidbodyType2D.Static;
+        StartCoroutine(BlinkEffect());
+        ScreenShakeManager.instance.TriggerShake(impulseSource, direction, 0.2f);
+        StartCoroutine(HitStop());
+        yield return new WaitForSeconds(0.25f);
+
+        rb.bodyType = RigidbodyType2D.Dynamic;
+        yield return new WaitForSeconds(invulnerabilityTime - 0.4f);
+
+        isInvulnerable = false;
+    }
+
+    private IEnumerator BlinkEffect()
+    {
+        SpriteRenderer sprite = GetComponent<SpriteRenderer>();
+        float elapsedTime = 0;
+        while (elapsedTime < invulnerabilityTime)
+        {
+            sprite.enabled = !sprite.enabled;
+            yield return new WaitForSeconds(blinkSpeed);
+            elapsedTime += blinkSpeed;
+        }
+        sprite.enabled = true;
+    }
+
+    private void Death()
+    {
+        bloodParticles.SetActive(true);
+        direction = new Vector3(2, 2, 2);
+        ScreenShakeManager.instance.TriggerShake(impulseSource, direction, 0.2f);
+        rb.bodyType = RigidbodyType2D.Static;
+        isInvulnerable = true;
+        StartCoroutine(HitStop());
+        Debug.Log("Game Over");
+        animator.SetBool("death", true);
+        dead = true;
+    }
+
+    public void DeactivatePlayer()
+    {
+        gameObject.SetActive(false);
+    }
+
+    public void ActivateGameOver()
+    {
+        if (gameOverScript != null)
+            gameOverScript.ActiveGameOver();
+    }
+
+    public bool IsDead() => dead;
+    public int GetCurrentHealth() => currentHealth;
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        // Cambiar lógica de caída al vacío
+        if (collision.CompareTag("Void"))
+        {
+            TakeDamage(1); 
+            TeleportToLastSafePosition();
+        }
+    }
+    private void TeleportToLastSafePosition()
+    {
+        transform.position = lastSafePosition.position;
+        Debug.Log("Teletransportado a la última posición segura: " + lastSafePosition);
+    }
+
+    public void Health()
+    {
+        if (currentHealth < maxHealth)
+        {
+            currentHealth++;
+            Debug.Log("Health increased to: " + currentHealth);
+        }
+        else
+        {
+            Debug.Log("Health is already at maximum.");
+        }
+    }
+
+    public IEnumerator HitStop()
+    {
+        Debug.Log("Damage Effect");
+        Time.timeScale = 0;
+        animator.SetBool("hurt", true);
+        yield return new WaitForSecondsRealtime(0.15f);
+        Time.timeScale = 1;
+        yield return new WaitForSecondsRealtime(0.25f);
+        animator.SetBool("hurt", false);
+    }
+}using UnityEngine;
+
+public class Bullet : MonoBehaviour
+{
+    private Rigidbody2D Rigidbody2D;
+    private Vector2 Direction;
+    private Animator animator;
+
+    public float Speed;
+    public int Damage = 1;
+
+    void Start()
+    {
+        Rigidbody2D = GetComponent<Rigidbody2D>();
+        animator = GetComponent<Animator>();
+    }
+
+    void Update()
+    {
+        if (!animator.GetBool("hit"))
+        {
+            Rigidbody2D.linearVelocity = Direction * Speed;
+        }
+    }
+
+    public void SetDirection(Vector2 direction)
+    {
+        Direction = direction.normalized;
+    }
+
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+        HandleCollision(collision);
+    }
+
+    private void HandleCollision(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            collision.GetComponent<PlayerHealth>()?.TakeDamage(Damage);
+        }
+
+        if (collision.CompareTag("Enemy"))
+        {
+            collision.GetComponent<EnemyHealth>()?.TakeDamage(Damage);
+        }
+        if (collision.CompareTag("Boss"))
+        {
+            collision.GetComponent<BossHealth>()?.TakeDamage(Damage);
+            animator.SetBool("hit", true);
+            Rigidbody2D.bodyType = RigidbodyType2D.Static;
+        }
+        if (collision.CompareTag("Mage"))
+        {
+            collision.GetComponent<MageHealth>()?.TakeDamage(Damage);
+            animator.SetBool("hit", true);
+            Rigidbody2D.bodyType = RigidbodyType2D.Static;
+        }
+        if (collision.CompareTag("Obstacle") || collision.CompareTag("Enemy") || collision.CompareTag("Player"))
+        {
+            animator.SetBool("hit", true);
+            Rigidbody2D.bodyType = RigidbodyType2D.Static;
+        }
+        if (collision.CompareTag("Slime"))
+        {
+            collision.GetComponent<SlimeHealth>()?.TakeDamage(Damage);
+            animator.SetBool("hit", true);
+            Rigidbody2D.bodyType = RigidbodyType2D.Static;
+        }
+    }
+
+    public void DestroyBullet()
+    {
+        Rigidbody2D.bodyType = RigidbodyType2D.Dynamic;
+        Destroy(gameObject);
+    }
+}
+using UnityEngine;
+
+public class MageBullet : MonoBehaviour
+{
+    [Header("Configuración")]
+    public float speed = 8f;
+    public int damage = 1;
+    public float BulletStrength = 0.02f;
+
+    [Header("Referencias")]
+    public Transform target;
+
+    private Rigidbody2D rb;
+    private Animator animator;
+    private Collider2D bulletCollider;
+    private Vector2 currentDirection;
+
+    void Start()
+    {
+        rb = GetComponent<Rigidbody2D>();
+        animator = GetComponent<Animator>();
+        bulletCollider = GetComponent<Collider2D>();
+
+        if (target == null)
+        {
+            target = GameObject.FindGameObjectWithTag("Player")?.transform;
+        }
+
+        if (target != null)
+        {
+            currentDirection = (target.position - transform.position).normalized;
+        }
+        else
+        {
+            currentDirection = Vector2.zero;
+        }
+
+        rb.linearVelocity = currentDirection * speed;
+    }
+
+    void FixedUpdate()
+    {
+        if (target == null) return;
+
+        Vector2 targetDirection = ((Vector2)target.position - rb.position).normalized;
+
+        currentDirection = Vector2.Lerp(currentDirection, targetDirection, BulletStrength);
+
+        rb.linearVelocity = currentDirection * speed;
+    }
+
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+
+        if (collision.CompareTag("Player"))
+        {
+            collision.GetComponent<PlayerHealth>()?.TakeDamage(damage);
+            TriggerImpactAnimation();
+        }
+        else if (collision.CompareTag("Obstacle") || collision.CompareTag("Enemy"))
+        {
+            TriggerImpactAnimation();
+        }
+        else if (collision.CompareTag("Boss"))
+        {
+            TriggerImpactAnimation();
+        }
+    }
+
+    void TriggerImpactAnimation()
+    {
+        rb.linearVelocity = Vector2.zero;
+        rb.bodyType = RigidbodyType2D.Static;
+
+
+        if (bulletCollider != null)
+            bulletCollider.enabled = false;
+
+        if (animator != null)
+            animator.SetTrigger("hit");
+    }
+
+    public void DestroyBullet()
+    {
+        Destroy(gameObject);
+    }
+}
+using UnityEngine;
+
+public class BossBullet : MonoBehaviour
+{
+    private Rigidbody2D Rigidbody2D;
+    private Vector2 Direction;
+    private Animator animator;
+
+    public float Speed;
+    public int Damage = 1;
+
+    void Start()
+    {
+        Rigidbody2D = GetComponent<Rigidbody2D>();
+        animator = GetComponent<Animator>();
+    }
+
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+        HandleCollision(collision);
+    }
+
+    private void HandleCollision(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            collision.GetComponent<PlayerHealth>()?.TakeDamage(Damage);
+        }
+        if (collision.CompareTag("Enemy"))
+        {
+            collision.GetComponent<EnemyHealth>()?.TakeDamage(Damage);
+        }
+
+        if (collision.CompareTag("Obstacle") || collision.CompareTag("Enemy") || collision.CompareTag("Player"))
+        {
+            animator.SetBool("hit", true);
+            Rigidbody2D.bodyType = RigidbodyType2D.Static;
+        }
+    }
+
+    public void DestroyBullet()
+    {
+        Rigidbody2D.bodyType = RigidbodyType2D.Dynamic;
+        Destroy(gameObject);
+    }
+}
+
+using System.Collections;
+using UnityEngine;
+
+public class LaserAttack : MonoBehaviour
+{
+    [Header("Configuración")]
+    public float minDestroyTime = 2f; // Tiempo mínimo antes de destruirse
+    public float maxDestroyTime = 3.5f; // Tiempo máximo antes de destruirse
+
+    [Header("Referencias")]
+    public GameObject LaserBody;
+    public GameObject Laser;
+    private bool isActive = false;
+
+    void Start()
+    {
+        LaserBody.SetActive(false);
+        Laser.SetActive(false);
+        ActivateLaser();
+    }
+
+    public void ActivateLaser()
+    {
+        if (isActive) return;
+        isActive = true;
+        LaserBody.SetActive(true);
+        Laser.SetActive(false);
+        StartCoroutine(LaserSequence());
+    }
+
+    IEnumerator LaserSequence()
+    {
+        Debug.Log("Láser activado, creciendo en altura...");
+        yield return new WaitForSeconds(1.5f);
+        Laser.SetActive(true);
+
+
+        float destroyTime = Random.Range(minDestroyTime, maxDestroyTime);
+        Debug.Log($"El láser se destruirá en {destroyTime} segundos.");
+        yield return new WaitForSeconds(destroyTime);
+
+        Destroy(gameObject);
+    }
+
+    void Update()
+    {
+        // Activación manual con la tecla X (para pruebas)
+        if (Input.GetKeyDown(KeyCode.X))
+        {
+            Debug.Log("Tecla X presionada: activando láser.");
+            ActivateLaser();
+        }
+    }
+}
+using UnityEngine;
+
+public class BombScript : MonoBehaviour
+{
+    private Animator animator;
+    private bool isCountingDown = false;
+    public int damage = 1;
+    private bool isExploding = false;
+    public Spikes spikes;
+    void Start()
+    {
+        animator = GetComponent<Animator>();
+        Debug.Log("Bomba iniciada correctamente.");
+        spikes = GetComponent<Spikes>();
+        spikes.enabled = false;
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (!isCountingDown)
+        {
+            if (collision.CompareTag("Player"))
+            {
+                CountingDown();
+            }
+        }
+    }
+
+    public void CountingDown()
+    {
+        isCountingDown = true;
+        Debug.Log("Cuenta regresiva iniciada.");
+        animator.SetBool("CountingDown", true);
+    }
+    public void Exploding()
+    {
+        Debug.Log("¡La bomba está explotando!");
+        animator.SetBool("Explode", true);
+        isExploding = true;
+        spikes.enabled = true;
+    }
+
+    public void Destroy()
+    {
+        Destroy(gameObject);
+    }
+}using UnityEngine;
+using UnityEngine.SceneManagement;
+
+public class GameOver : MonoBehaviour
+{
+    public GameObject GameOverPanel;
+    private bool gameOver;
+
+    private void Update()
+    {
+        if (gameOver == true)
+        {
+            if (Input.GetKeyUp(KeyCode.Space))
+            {
+                RestartLevel();
+            }
+        }
+    }
+    public void ActiveGameOver()
+    {
+        gameOver = true;
+        if (GameOverPanel != null)
+        {
+            GameOverPanel.SetActive(true);
+        }
+        else
+        {
+            // Si la referencia está rota, buscar por etiqueta
+            GameObject panel = GameObject.FindGameObjectWithTag("GameOverPanel");
+            if (panel != null)
+            {
+                GameOverPanel = panel; // Actualizar referencia
+                panel.SetActive(true);
+            }
+            else
+            {
+                // Si no hay panel, reiniciar el nivel
+                RestartLevel();
+            }
+        }
+    }
+
+    public void RestartLevel()
+    {
+            gameOver = false;
+            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
+}using UnityEngine;
+using System.Collections;
+using TMPro;
+using UnityEngine.SceneManagement;
+
+public class FinalMenu : MonoBehaviour
+{
+    [SerializeField] private TMP_Text badFinalText;
+    [SerializeField] private Dialogue dialogue;
+    [SerializeField] private BossHealth bossHealth;
+    [SerializeField] private GameObject badFinalPanel;
+    [SerializeField] private GameObject goodFinalPanel;
+    [SerializeField] private GameObject hearthPanel;
+
+    private bool goodFinal;
+    private bool badFinal;
+    private bool goodFinalTriggered;
+    private bool badFinalTriggered;
+
+    private void Start()
+    {
+        goodFinal = false;
+        badFinal = false;
+        goodFinalTriggered = false;
+        badFinalTriggered = false;
+        goodFinalPanel.SetActive(false);
+        badFinalPanel.SetActive(false);
+    }
+
+    private void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.X))
+        {
+            bossHealth.currentHealth = 0;
+            dialogue.BossDialogue = true;
+            OnTriggerEnter2DFake();
+        }
+
+        if (Input.GetKeyDown(KeyCode.C))
+        {
+            bossHealth.currentHealth = 0;
+            dialogue.BossDialogue = false;
+        }
+
+        if ((goodFinal || badFinal) && Input.GetKeyDown(KeyCode.Space))
+        {
+            SceneManager.LoadScene("Main Menu");
+            PlayerPrefs.SetInt("BossDialogue", 0);
+            PlayerPrefs.Save();
+        }
+
+        if (dialogue.BossDialogue == false && bossHealth.currentHealth <= 0 && !goodFinalTriggered)
+        {
+            goodFinalTriggered = true;
+            StartCoroutine(GoodFinalCoroutine());
+        }
+    }
+
+    private IEnumerator BadFinalCoroutine()
+    {
+        Debug.Log("BadFinal Coroutine started.");
+        yield return new WaitForSeconds(2.5f);
+
+        FadeController.Instance.FadeOut(() =>
+        {
+            badFinal = true;
+            hearthPanel.SetActive(false);
+            badFinalPanel.SetActive(true);
+            goodFinalPanel.SetActive(false);
+            FadeController.Instance.FadeIn();
+            Debug.Log("Bad final shown.");
+        });
+    }
+
+    private IEnumerator GoodFinalCoroutine()
+    {
+        Debug.Log("GoodFinal Coroutine started.");
+        yield return new WaitForSeconds(3f);
+
+        FadeController.Instance.FadeOut(() =>
+        {
+            goodFinal = true;
+            hearthPanel.SetActive(false);
+            badFinalPanel.SetActive(false);
+            goodFinalPanel.SetActive(true);
+            FadeController.Instance.FadeIn();
+            Debug.Log("Good final shown.");
+        });
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            if (bossHealth.currentHealth <= 0 && dialogue.BossDialogue == true)
+            {
+                badFinalTriggered = true;
+                StartCoroutine(BadFinalCoroutine());
+            }
+        }
+    }
+
+    private void OnTriggerEnter2DFake()
+    {
+        if (bossHealth.currentHealth <= 0 && dialogue.BossDialogue == true)
+        {
+            badFinalTriggered = true;
+            StartCoroutine(BadFinalCoroutine());
+        }
+    }
+}using UnityEngine;
+using UnityEngine.UI;
+using System.Collections.Generic;
+public class VolumeManager : MonoBehaviour
+{
+    public Slider slider;
+    public float sliderValue;
+    void Start()
+    {
+        slider.value = PlayerPrefs.GetFloat("Volume", 0.5f);
+        AudioListener.volume = slider.value;
+    }
+    public void SetVolume(float value)
+    {
+        sliderValue = value;
+        AudioListener.volume = sliderValue;
+        PlayerPrefs.SetFloat("Volume", sliderValue);
+        PlayerPrefs.Save();
+        Debug.Log("Volume set to: " + sliderValue);
+    }
+}
+using UnityEngine;
+using UnityEngine.UI;
+using System.Collections.Generic;
+public class VolumeManager : MonoBehaviour
+{
+    public Slider slider;
+    public float sliderValue;
+    void Start()
+    {
+        slider.value = PlayerPrefs.GetFloat("Volume", 0.5f);
+        AudioListener.volume = slider.value;
+    }
+    public void SetVolume(float value)
+    {
+        sliderValue = value;
+        AudioListener.volume = sliderValue;
+        PlayerPrefs.SetFloat("Volume", sliderValue);
+        PlayerPrefs.Save();
+        Debug.Log("Volume set to: " + sliderValue);
+    }
+}
+using TMPro;
+using UnityEngine;
+using System.Collections.Generic;
+
+public class DropdownResolution : MonoBehaviour
+{
+    public TMP_Dropdown dropDown;
+    Resolution[] resolutions;
+
+    void Start()
+    {
+        ReviewResolutions();
+    }
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.F11))
+        {
+            ToggleFullScreen();
+        }
+    }
+
+    void ReviewResolutions()
+    {
+        resolutions = Screen.resolutions;
+        dropDown.ClearOptions();
+        List<string> options = new List<string>();
+        int currentResolutionIndex = 0;
+
+        for (int i = 0; i < resolutions.Length; i++)
+        {
+            string option = resolutions[i].width + "x" + resolutions[i].height;
+            options.Add(option);
+
+            if (resolutions[i].width == Screen.currentResolution.width &&
+                resolutions[i].height == Screen.currentResolution.height)
+            {
+                currentResolutionIndex = i;
+            }
+        }
+
+        dropDown.AddOptions(options);
+        dropDown.value = currentResolutionIndex;
+        dropDown.RefreshShownValue();
+    }
+
+    public void ChangeResolution(int resolutionIndex)
+    {
+        Resolution resolution = resolutions[resolutionIndex];
+        Screen.SetResolution(resolution.width, resolution.height, Screen.fullScreen);
+    }
+
+    void ToggleFullScreen()
+    {
+        Screen.fullScreen = !Screen.fullScreen;
+    }
+}
+using UnityEngine;
+using UnityEngine.Localization.Settings;
+using System.Collections;
+
+public class LanguageManager : MonoBehaviour
+{
+    private bool active = false;
+    void Start()
+    {
+        int ID = PlayerPrefs.GetInt("LocalKey", 0);
+        ChangeLocale(ID);
+    }
+    public void ChangeLocale(int localeID)
+    {
+        if (active)
+        {
+            return;
+        }
+        StartCoroutine(SetLocale(localeID));
+    }
+
+    private IEnumerator SetLocale(int localeID)
+    {
+        active = true;
+        yield return LocalizationSettings.InitializationOperation;
+        LocalizationSettings.SelectedLocale = LocalizationSettings.AvailableLocales.Locales[localeID];
+        PlayerPrefs.SetInt("LocalKey", localeID);
+        active = false;
+    }
+}
+using UnityEngine;
+public class GameData
+{
+    public Vector3 PlayerPosition;
+    public int currentHealth;
+    public bool hasGun;
+    public bool BossDialogue;
+    public string currentScene;
+}
+using UnityEngine;
+using System.IO;
+public class GameDataManager : MonoBehaviour
+{
+    public GameObject Player;
+    public string SaveFile;
+    public GameData gameData;
+    public GameObject NPC;
+
+    private void Awake()
+    {
+        SaveFile = Application.dataPath + "/GameData.json";
+        Player = GameObject.FindGameObjectWithTag("Player");
+    }
+    private void Update()
+    { 
+    }
+
+    public void LoadData()
+    {
+        if (File.Exists(SaveFile))
+        {
+            Debug.Log("Loading data");
+            string content = File.ReadAllText(SaveFile);
+            gameData = JsonUtility.FromJson<GameData>(content);
+
+            // Cargar la escena solo si es diferente
+            string savedScene = gameData.currentScene;
+            string currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+
+            // Si la escena es diferente, cargarla
+            if (savedScene != currentScene)
+            {
+                Debug.Log("Changing scene to: " + savedScene);
+                UnityEngine.SceneManagement.SceneManager.LoadScene(savedScene);
+            }
+            else
+            {
+                // Si estamos en la misma escena, solo teletransportamos al jugador
+                Player.transform.position = gameData.PlayerPosition;
+            }
+
+            // Cargar otros datos
+            PlayerHealth ph = Player.GetComponent<PlayerHealth>();
+            ph.currentHealth = gameData.currentHealth;
+            PlayerController pc = Player.GetComponent<PlayerController>();
+            pc.playerHasGun = gameData.hasGun;
+        }
+        else
+        {
+            Debug.Log("File not found");
+        }
+    }
+
+    public void SaveData()
+    {
+        PlayerHealth ph = Player.GetComponent<PlayerHealth>();
+        PlayerController pc = Player.GetComponent<PlayerController>();
+        Dialogue dialogue = NPC.GetComponent<Dialogue>();
+
+        GameData newData = new GameData()
+        {
+            PlayerPosition = Player.transform.position,
+            currentHealth = ph.currentHealth,
+            hasGun = pc.playerHasGun,
+            BossDialogue = dialogue.BossDialogue,
+            currentScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name // Guarda el nombre de la escena
+        };
+
+        string json = JsonUtility.ToJson(newData);
+        File.WriteAllText(SaveFile, json);
+        Debug.Log("Datos guardados");
+    }
+
+
+}
+using UnityEngine;
+using System.Collections;
+using TMPro;
+using UnityEngine.SceneManagement;
+using UnityEngine.Localization;
+
+public class Dialogue : MonoBehaviour
+{
+    [SerializeField] private GameObject dialogueMark;
+    [SerializeField] private LocalizedString[] localizedDialogueLines;
+    [SerializeField] private GameObject dialoguePanel;
+    [SerializeField] private TMP_Text dialogueText;
+    [SerializeField] private GameObject runParticles;
+    private bool isPlayerInRange;
+    private bool didDialogueStart;
+    private int lineIndex;
+    private float typingTime = 0.05f;
+    public PlayerController playerController;
+    public bool BossDialogue;
+    [SerializeField] private Bullet bullet;
+    [SerializeField] private Animator playerAnimator;
+
+    private void Start()
+    {
+        playerController.playerHasGun = false;
+        BossDialogue = PlayerPrefs.GetInt("BossDialogue", 0) == 1;
+        bullet.Damage = BossDialogue ? 2 : 1;
+    }
+
+    void Update()
+    {
+        if (isPlayerInRange && Input.GetButtonDown("Fire1"))
+        {
+            if (!didDialogueStart)
+            {
+                StartDialogue();
+            }
+            else if (dialogueText.text == GetCurrentText())
+            {
+                NextDialogueLine();
+            }
+            else
+            {
+                StopAllCoroutines();
+                dialogueText.text = GetCurrentText();
+            }
+        }
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            isPlayerInRange = true;
+            dialogueMark.SetActive(true);
+        }
+    }
+
+    private void OnTriggerExit2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            dialogueMark.SetActive(false);
+            isPlayerInRange = false;
+        }
+    }
+
+    private void StartDialogue()
+    {
+        didDialogueStart = true;
+        dialoguePanel.SetActive(true);
+        dialogueMark.SetActive(false);
+        lineIndex = 0;
+        runParticles.SetActive(false);
+        StartCoroutine(ShowLine());
+        playerController.enabled = false;
+        playerAnimator.SetBool("running", false);
+    }
+
+    private IEnumerator ShowLine()
+    {
+        dialogueText.text = string.Empty;
+
+        string currentLine = null;
+        localizedDialogueLines[lineIndex].StringChanged += (translatedText) => currentLine = translatedText;
+        localizedDialogueLines[lineIndex].RefreshString();
+
+        yield return new WaitUntil(() => currentLine != null);
+
+        foreach (char ch in currentLine)
+        {
+            dialogueText.text += ch;
+            yield return new WaitForSecondsRealtime(typingTime);
+        }
+    }
+
+    private string GetCurrentText()
+    {
+        string text = null;
+        localizedDialogueLines[lineIndex].StringChanged += (translatedText) => text = translatedText;
+        localizedDialogueLines[lineIndex].RefreshString();
+        return text ?? "";
+    }
+
+    private void NextDialogueLine()
+    {
+        lineIndex++;
+        if (lineIndex < localizedDialogueLines.Length)
+        {
+            StartCoroutine(ShowLine());
+        }
+        else
+        {
+            string currentScene = SceneManager.GetActiveScene().name;
+
+            if (currentScene == "Level 1")
+            {
+                playerController.playerHasGun = true;
+                playerController.shootCooldown = 0.65f;
+            }
+            else if (currentScene == "Level 2")
+            {
+                playerController.playerHasGun = true;
+                playerController.shootCooldown = 0.45f;
+            }
+            else if (currentScene == "Level 3")
+            {
+                playerController.playerHasGun = true;
+                BossDialogue = true;
+                PlayerPrefs.SetInt("BossDialogue", 1);
+                PlayerPrefs.Save();
+                bullet.Damage = 2;
+            }
+
+            didDialogueStart = false;
+            dialoguePanel.SetActive(false);
+            dialogueMark.SetActive(true);
+            playerController.enabled = true;
+        }
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class FadeController : MonoBehaviour
+{
+    public static FadeController Instance;
+
+    [SerializeField] private CanvasGroup fadePanel;
+    [SerializeField] private float fadeDuration = 0.25f; // Duración del fade (en segundos)
+
+    private void Awake()
+    {
+        // Solo asegurarme que haya una instancia
+        if (Instance == null)
+        {
+            Instance = this;
+        }
+    }
+
+    // Llamado al inicio para poner el alpha a 0 (invisible)
+    private void Start()
+    {
+        fadePanel.alpha = 0f; // Inicialmente invisible (transparente)
+    }
+
+    // Función para hacer fade in (de 0 a 1)
+    public void FadeIn(System.Action onComplete = null)
+    {
+        StartCoroutine(FadeCoroutine(0f, 1f, onComplete)); // Aquí se hace el fade de 0 a 1
+    }
+
+    // Función para hacer fade out (de 1 a 0)
+    public void FadeOut(System.Action onComplete = null)
+    {
+        StartCoroutine(FadeCoroutine(1f, 0f, onComplete)); // Aquí se hace el fade de 1 a 0
+    }
+
+    // Coroutine que realiza el fade entre los valores de alpha
+    private IEnumerator FadeCoroutine(float startAlpha, float endAlpha, System.Action onComplete)
+    {
+        fadePanel.alpha = startAlpha;  // Set initial alpha
+
+        float timeElapsed = 0f;
+
+        while (timeElapsed < fadeDuration)
+        {
+            fadePanel.alpha = Mathf.Lerp(startAlpha, endAlpha, timeElapsed / fadeDuration); // Interpola entre 0 y 1
+            timeElapsed += Time.deltaTime;
+            yield return null;
+        }
+
+        fadePanel.alpha = endAlpha;  // Asegura que se haya llegado al valor final
+
+        onComplete?.Invoke();  // Ejecutar el callback si se pasa uno
+    }
+}
+using TMPro;
+using UnityEngine;
+using UnityEngine.Localization.Settings;
+using System.Collections;
+
+public class DropdownLanguage : MonoBehaviour
+{
+    public TMP_Dropdown dropdown;
+    private bool active = false;
+
+    void Start()
+    {
+        dropdown.onValueChanged.AddListener(OnDropdownValueChanged);
+    }
+
+    private void Update()
+    {
+        // Obtenemos el índice actual del idioma seleccionado
+        int currentLocaleIndex = LocalizationSettings.AvailableLocales.Locales.IndexOf(LocalizationSettings.SelectedLocale);
+
+        // Actualizamos visualmente el dropdown si es necesario
+        if (dropdown.value != currentLocaleIndex)
+        {
+            dropdown.value = currentLocaleIndex;
+            dropdown.RefreshShownValue();
+        }
+    }
+
+    private void OnDropdownValueChanged(int index)
+    {
+        // Guardamos la selección y cambiamos el idioma
+        PlayerPrefs.SetInt("LanguageKey", index);
+        ChangeLanguage(index);
+    }
+
+    private void ChangeLanguage(int localeID)
+    {
+        if (active)
+            return;
+
+        StartCoroutine(SetLocale(localeID));
+    }
+
+    private IEnumerator SetLocale(int localeID)
+    {
+        active = true;
+        yield return LocalizationSettings.InitializationOperation;
+
+        if (localeID >= 0 && localeID < LocalizationSettings.AvailableLocales.Locales.Count)
+        {
+            LocalizationSettings.SelectedLocale = LocalizationSettings.AvailableLocales.Locales[localeID];
+        }
+
+        active = false;
+    }
+}
+using UnityEngine;
+using Unity.Cinemachine;
+
+public class ScreenShakeManager : MonoBehaviour
+{
+    public static ScreenShakeManager instance;
+    [SerializeField] private float shakeForce = 0.1f;
+    private CinemachineImpulseSource impulseSource;
+    private Vector3 direction;
+    private void Awake()
+    {
+        if (instance == null)
+        {
+            instance = this;
+        }
+
+        impulseSource = GetComponent<CinemachineImpulseSource>();
+    }
+
+    public void TriggerShake(CinemachineImpulseSource impulseSource, Vector3 direction, float force)
+    {
+        impulseSource.GenerateImpulse(direction * force);
+    }
+}
+using TMPro;
+using UnityEngine;
+using UnityEngine.Localization;
+using UnityEngine.Localization.Settings;
+using UnityEngine.SceneManagement;
+using System.Collections;
+
+public class DialogueBoss : MonoBehaviour
+{
+    [SerializeField] private LocalizedString[] localizedDialogueLines;
+    [SerializeField] private GameObject dialoguePanel;
+    [SerializeField] private TMP_Text dialogueText;
+    [SerializeField] private BossHealth bossHealth;
+
+    private int lineIndex;
+    private float typingTime = 0.05f;
+    public bool didDialogueStart;
+
+    public void StartDialogue()
+    {
+        dialoguePanel.SetActive(true);
+        lineIndex = 0;
+        Time.timeScale = 0f;
+        bossHealth.waitingToDie = true;
+        didDialogueStart = true;
+        StartCoroutine(ShowLine());
+    }
+
+    private IEnumerator ShowLine()
+    {
+        dialogueText.text = string.Empty;
+
+        // Espera hasta que el LocalizedString se haya cargado
+        var getLocalized = localizedDialogueLines[lineIndex].GetLocalizedStringAsync();
+        yield return getLocalized;
+
+        string line = getLocalized.Result;
+
+        foreach (char ch in line)
+        {
+            dialogueText.text += ch;
+            yield return new WaitForSecondsRealtime(typingTime);
+        }
+
+        yield return new WaitForSecondsRealtime(1f);
+        NextDialogueLine();
+    }
+
+    private void NextDialogueLine()
+    {
+        lineIndex++;
+        if (lineIndex < localizedDialogueLines.Length)
+        {
+            StartCoroutine(ShowLine());
+        }
+        else
+        {
+            dialoguePanel.SetActive(false);
+            Time.timeScale = 1f;
+            bossHealth.waitingToDie = false;
+            bossHealth.Die();
+            Debug.Log("Dialogue finished, boss is dead");
+        }
+    }
+}
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+public class MainMenu : MonoBehaviour
+{
+    [SerializeField] private GameObject mainMenuPanel;
+    [SerializeField] private GameObject settingsPanel;
+    [SerializeField] private GameObject selectGameMode;
+    [SerializeField] private GameDataManager gameDataManager;
+    [SerializeField] private GameObject selectGameSave;
+    [SerializeField] private GameObject selectLanguage;
+
+    public void Settings()
+    {
+        mainMenuPanel.SetActive(false);
+        settingsPanel.SetActive(true);
+    }
+
+    public void SelectGameMode()
+    {
+        mainMenuPanel.SetActive(false);
+        selectGameMode.SetActive(true);
+    }
+
+    public void ExitSelectMode()
+    {
+        mainMenuPanel.SetActive(true);
+        selectGameMode.SetActive(false);
+    }
+    public void ExitGame()
+    {
+        Application.Quit();
+    }
+    public void ExitSettings()
+    {
+        mainMenuPanel.SetActive(true);
+        settingsPanel.SetActive(false);
+    }
+    public void SelectGameSave()
+    {
+        selectGameMode.SetActive(false);
+        selectGameSave.SetActive(true);
+    }
+    public void ExitSelectGameSave()
+    {
+        selectGameMode.SetActive(true);
+        selectGameSave.SetActive(false);
+    }
+    public void SelectLanguage()
+    {
+        settingsPanel.SetActive(false);
+        selectLanguage.SetActive(true);
+    }
+    public void ExitLanguage()
+    {
+        settingsPanel.SetActive(true);
+        selectLanguage.SetActive(false);
+    }
+    public void NewGame()
+    {
+        SceneManager.LoadScene("Level 1");
+        PlayerPrefs.SetInt("HasGun", 0);
+        PlayerPrefs.SetInt("BossDialogue", 0);
+    }
+    public void ContinueGame()
+    {
+        gameDataManager.LoadData();
+    }
+}
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using System.Collections;
+public class PauseMenu : MonoBehaviour
+{
+    public GameObject pauseMenuUI;
+    public GameDataManager gameDataManager;
+    public GameObject hearthsPanel;
+    public GameObject gameOverPanel;
+    public GameObject settingsPanel;
+    public PlayerHealth playerHealth;
+    public Rigidbody2D rb;
+    public Dialogue dialogue;
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            if (pauseMenuUI.activeSelf)
+            {
+                pauseMenuUI.SetActive(false);
+                hearthsPanel.SetActive(true);
+                StartCoroutine(InvulnerablityTime());
+                rb.bodyType = RigidbodyType2D.Dynamic;
+
+            }
+            else
+            {
+                pauseMenuUI.SetActive(true);
+                hearthsPanel.SetActive(false);
+                gameOverPanel.SetActive(false);
+                rb.bodyType = RigidbodyType2D.Static;
+                playerHealth.isInvulnerable = true;
+            }
+        }
+    }
+
+
+    public void Continue()
+    {
+        pauseMenuUI.SetActive(false);
+        StartCoroutine(InvulnerablityTime());
+        rb.bodyType = RigidbodyType2D.Dynamic;
+    }
+
+    public void MainMenu()
+    {
+        SceneManager.LoadScene("Main Menu");
+    }
+    public void Quit()
+    {
+        Application.Quit();
+    }
+    public void Settings()
+    {
+        settingsPanel.SetActive(true);
+        pauseMenuUI.SetActive(false);
+        playerHealth.isInvulnerable = true;
+    }
+    public void ExitSettings()
+    {
+        settingsPanel.SetActive(false);
+        pauseMenuUI.SetActive(true);
+        playerHealth.isInvulnerable = true;
+        rb.bodyType = RigidbodyType2D.Static;
+    }
+    private IEnumerator InvulnerablityTime()
+    {
+        yield return new WaitForSeconds(0.5f);
+        playerHealth.isInvulnerable = false;
+        rb.bodyType = RigidbodyType2D.Dynamic;
+    }
+}
+using UnityEngine;
+
+public class HeartUIManager : MonoBehaviour
+{
+    public GameObject heartFull1, heartFull2, heartFull3;
+    public GameObject heartHalf1, heartHalf2, heartHalf3;
+    public GameObject heartEmpty1, heartEmpty2, heartEmpty3;
+
+    public PlayerHealth playerHealth;
+
+    void Update()
+    {
+        UpdateHearts();
+    }
+
+    void UpdateHearts()
+    {
+        if (playerHealth == null) return;
+
+        int currentHealth = playerHealth.GetCurrentHealth();
+
+        // Heart 1
+        if (currentHealth >= 6)
+        {
+            heartFull1.SetActive(true);
+            heartHalf1.SetActive(false);
+            heartEmpty1.SetActive(false);
+        }
+        else if (currentHealth == 5)
+        {
+            heartFull1.SetActive(false);
+            heartHalf1.SetActive(true);
+            heartEmpty1.SetActive(false);
+        }
+        else
+        {
+            heartFull1.SetActive(false);
+            heartHalf1.SetActive(false);
+            heartEmpty1.SetActive(true);
+        }
+
+        // Heart 2
+        if (currentHealth >= 4)
+        {
+            heartFull2.SetActive(true);
+            heartHalf2.SetActive(false);
+            heartEmpty2.SetActive(false);
+        }
+        else if (currentHealth == 3)
+        {
+            heartFull2.SetActive(false);
+            heartHalf2.SetActive(true);
+            heartEmpty2.SetActive(false);
+        }
+        else
+        {
+            heartFull2.SetActive(false);
+            heartHalf2.SetActive(false);
+            heartEmpty2.SetActive(true);
+        }
+
+        // Heart 3
+        if (currentHealth >= 2)
+        {
+            heartFull3.SetActive(true);
+            heartHalf3.SetActive(false);
+            heartEmpty3.SetActive(false);
+        }
+        else if (currentHealth == 1)
+        {
+            heartFull3.SetActive(false);
+            heartHalf3.SetActive(true);
+            heartEmpty3.SetActive(false);
+        }
+        else
+        {
+            heartFull3.SetActive(false);
+            heartHalf3.SetActive(false);
+            heartEmpty3.SetActive(true);
+        }
+    }
+}
+using UnityEngine;
+
+[ExecuteInEditMode]
+public class ParallaxCamera : MonoBehaviour
+{
+    public delegate void ParallaxCameraDelegate(float deltaMovement);
+    public ParallaxCameraDelegate onCameraTranslate;
+
+    private float oldPosition;
+
+    void Start()
+    {
+        oldPosition = transform.position.x;
+    }
+
+    void Update()
+    {
+        if (transform.position.x != oldPosition)
+        {
+            if (onCameraTranslate != null)
+            {
+                float delta = oldPosition - transform.position.x;
+                onCameraTranslate(delta);
+            }
+
+            oldPosition = transform.position.x;
+        }
+    }
+}using System.Collections.Generic;
+using UnityEngine;
+
+[ExecuteInEditMode]
+public class ParallaxBackground : MonoBehaviour
+{
+    public ParallaxCamera parallaxCamera;
+    List<ParallaxLayer> parallaxLayers = new List<ParallaxLayer>();
+
+    void Start()
+    {
+        if (parallaxCamera == null)
+            parallaxCamera = Camera.main.GetComponent<ParallaxCamera>();
+
+        if (parallaxCamera != null)
+            parallaxCamera.onCameraTranslate += Move;
+
+        SetLayers();
+    }
+
+    void SetLayers()
+    {
+        parallaxLayers.Clear();
+
+        for (int i = 0; i < transform.childCount; i++)
+        {
+            ParallaxLayer layer = transform.GetChild(i).GetComponent<ParallaxLayer>();
+
+            if (layer != null)
+            {
+                layer.name = "Layer-" + i;
+                parallaxLayers.Add(layer);
+            }
+        }
+    }
+
+    void Move(float delta)
+    {
+        foreach (ParallaxLayer layer in parallaxLayers)
+        {
+            layer.Move(delta);
+        }
+    }
+}using UnityEngine;
+
+[ExecuteInEditMode]
+public class ParallaxLayer : MonoBehaviour
+{
+    public float parallaxFactor;
+
+    public void Move(float delta)
+    {
+        Vector3 newPos = transform.localPosition;
+        newPos.x -= delta * parallaxFactor;
+
+        transform.localPosition = newPos;
+    }
+}using System.Collections;
+using UnityEngine;
+
+public class EnemyHealth : MonoBehaviour
+{
+    public int maxHealth = 3;
+    public int currentHealth = 3;
+    public Animator animator;
+    private Grunt grunt;
+    public float hurtAnimationTime = 0.5f;
+
+    void Start()
+    {
+        currentHealth = Mathf.Max(currentHealth, maxHealth);
+        grunt = GetComponent<Grunt>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Enemy Health: " + currentHealth);
+        StartCoroutine(HurtSequence());
+
+        if (currentHealth == 0)
+        {
+            StartCoroutine(Die());
+        }
+    }
+    private IEnumerator Die()
+    {
+        StartCoroutine(HurtSequence());
+        yield return new WaitForSeconds(0.2f);
+        if (grunt != null)
+            grunt.enabled = false;
+        animator.SetBool("isDead", true);
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        Time.timeScale = 0f;
+        yield return new WaitForSecondsRealtime(0.05f);
+        Time.timeScale = 1f;
+        yield return new WaitForSecondsRealtime(0.15f);
+        animator.SetBool("hurt", false);
+    }
+    public void DestroyEnemy() => Destroy(gameObject);
+}
+using UnityEngine;
+
+public class Grunt : MonoBehaviour
+{
+    public GameObject Player;
+    public GameObject BulletGruntPrefab;
+    public Transform firePoint;
+
+    private float LastShoot;
+
+    void Update()
+    {
+        HandleOrientation();
+        HandleShooting();
+    }
+
+    private void HandleOrientation()
+    {
+        Vector3 direction = Player.transform.position - transform.position;
+        transform.localScale = direction.x >= 0 ? Vector3.one : new Vector3(-1.0f, 1.0f, 1.0f);
+    }
+
+    private void HandleShooting()
+    {
+        float distance = Mathf.Abs(Player.transform.position.x - transform.position.x);
+
+        if (distance < 2.0f && Time.time > LastShoot + 1.0f)
+        {
+            Shoot();
+            LastShoot = Time.time;
+        }
+    }
+    private void Shoot()
+    {
+        Vector2 direction = transform.localScale.x == 1.0f ? Vector2.right : Vector2.left;
+        GameObject bulletgrunt = Instantiate(BulletGruntPrefab, firePoint.position, Quaternion.identity);
+        bulletgrunt.GetComponent<Bullet>().SetDirection(direction);
+    }
+}
+
+using UnityEngine;
+
+public class SlimeControl : MonoBehaviour
+{
+    public float Velocity = 5f;
+    private Rigidbody2D rb;
+    private int direction = -1; // -1 = izquierda, 1 = derecha
+
+    void Start()
+    {
+        rb = GetComponent<Rigidbody2D>();
+        if (rb == null)
+        {
+            Debug.LogError("Rigidbody2D no encontrado.");
+        }
+    }
+
+    void Update()
+    {
+        Move();
+    }
+
+    private void Move()
+    {
+        // Mueve al slime en la dirección correspondiente (izquierda o derecha)
+        rb.linearVelocity = new Vector2(direction * Velocity, rb.linearVelocity.y);
+
+        // Cambia la dirección del sprite según el valor de 'direction'
+        if (direction == -1)
+        {
+            transform.localScale = new Vector3(1.0f, 1.0f, 1.0f); // Mirar hacia la derecha
+        }
+        else
+        {
+            transform.localScale = new Vector3(-1.0f, 1.0f, 1.0f); // Mirar hacia la izquierda
+        }
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        // Solo cambia dirección si choca con algo relevante
+        if (collision.CompareTag("Obstacle") ||
+            collision.CompareTag("Enemy") || collision.CompareTag("Boss") || collision.CompareTag("Collisioner") ||
+            collision.CompareTag("Mage"))
+        {
+            direction *= -1; // Invierte la dirección (izquierda/derecha)
+        }
+        if (collision.CompareTag("Player"))
+        {
+            collision.GetComponent<PlayerHealth>()?.TakeDamage(1);
+            direction *= -1;
+        }
+    }
+}
+
+using UnityEngine;
+using static Unity.Collections.Unicode;
+using System.Collections;
+
+public class SlimeHealth : MonoBehaviour
+{
+    public int maxHealth = 3;
+    public int currentHealth = 3;
+    public Animator animator;
+    public SlimeControl slime;
+    private Rigidbody2D rb;
+
+    void Start()
+    {
+        currentHealth = Mathf.Max(currentHealth, maxHealth);
+        slime = GetComponent<SlimeControl>();
+        rb = GetComponent<Rigidbody2D>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        StartCoroutine(HurtSequence());
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Slime Health: " + currentHealth);
+
+        if (currentHealth == 0)
+        {
+            StartCoroutine(Die());
+        }
+    }
+    private IEnumerator Die()
+    {
+        StartCoroutine(HurtSequence());
+        yield return new WaitForSeconds(0.2f);
+        rb.bodyType = RigidbodyType2D.Static;
+        animator.SetBool("die", true);
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        Time.timeScale = 0f;
+        slime.Velocity = 0f;
+        yield return new WaitForSecondsRealtime(0.05f);
+        Time.timeScale = 1f;
+        yield return new WaitForSecondsRealtime(0.15f);
+        animator.SetBool("hurt", false);
+        slime.Velocity = 0.5f;
+    }
+
+    public void DestroyEnemy() => Destroy(gameObject);
+}
+
+using UnityEngine;
+using System.Collections;
+
+public class EnemySpawnAttack : MonoBehaviour
+{
+    public GameObject enemyPrefab;
+    public Transform[] enemyPoints;
+    public int minEnemy = 3;
+    public int maxEnemy = 6;
+    public float minDelay = 0.05f;
+    public float maxDelay = 0.2f;
+    public BossAttacksManager bossAttacksManager;
+    public BossHealth bossHealth;
+
+    private Coroutine currentCoroutine;
+
+    public void StartEnemySpawn()
+    {
+        if (bossHealth.currentHealth > 0) // Check boss health
+        {
+            if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+            currentCoroutine = StartCoroutine(SpawnEnemies());
+        }
+    }
+
+    private IEnumerator SpawnEnemies()
+    {
+        int enemiesToSpawn = Random.Range(minEnemy, maxEnemy + 1);
+        int spawnCount = Mathf.Min(enemiesToSpawn, enemyPoints.Length);
+
+        Transform[] selectedPoints = SelectRandomPoints(spawnCount);
+
+        foreach (Transform point in selectedPoints)
+        {
+            GameObject enemy = Instantiate(enemyPrefab, point.position, Quaternion.identity);
+            float randomDelay = Random.Range(minDelay, maxDelay);
+            yield return new WaitForSeconds(randomDelay);
+        }
+
+        yield return new WaitForSeconds(4f); // Cooldown
+        bossAttacksManager.StartNewAttack();
+    }
+
+    private Transform[] SelectRandomPoints(int count)
+    {
+        System.Collections.Generic.List<Transform> availablePoints = new System.Collections.Generic.List<Transform>(enemyPoints);
+        Transform[] selectedPoints = new Transform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = Random.Range(0, availablePoints.Count);
+            selectedPoints[i] = availablePoints[index];
+            availablePoints.RemoveAt(index);
+        }
+
+        return selectedPoints;
+    }
+}using UnityEngine;
+
+public class Mage : MonoBehaviour
+{
+    [Header("Configuración")]
+    public GameObject bulletPrefab;
+    public Transform firePoint;
+    public float fireCooldown = 2f;
+    public int damage = 1;
+    private float lastShootTime;
+    private Transform playerTarget;
+
+    void Start()
+    {
+        playerTarget = GameObject.FindGameObjectWithTag("Player")?.transform;
+    }
+
+    void Update()
+    {
+        if (playerTarget == null) return;
+
+        HandleRotation();
+
+        if (Time.time >= lastShootTime + fireCooldown)
+        {
+            Shoot();
+            lastShootTime = Time.time;
+        }
+    }
+
+    void HandleRotation()
+    {
+        Vector3 direction = playerTarget.position - transform.position;
+        transform.localScale = new Vector3(
+            Mathf.Sign(direction.x),
+            1f,
+            1f
+        );
+    }
+
+    void Shoot()
+    {
+        GameObject bullet = Instantiate(bulletPrefab, firePoint.position, Quaternion.identity);
+        MageBullet homing = bullet.GetComponent<MageBullet>();
+
+        if (homing != null)
+        {
+            homing.target = playerTarget;
+        }
+    }
+
+}using UnityEngine;
+using System.Collections;
+public class MageHealth : MonoBehaviour
+{
+    public int maxHealth = 5;
+    public int currentHealth = 5;
+    public Animator animator;
+    public Mage mage;
+
+    void Start()
+    {
+        currentHealth = Mathf.Max(currentHealth, maxHealth);
+        mage = GetComponent<Mage>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Mage Health: " + currentHealth);
+        StartCoroutine(HurtSequence());
+
+        if (currentHealth == 0)
+        {
+            StartCoroutine(Die());
+        }
+    }
+
+    private IEnumerator Die()
+    {
+        StartCoroutine(HurtSequence());
+        yield return new WaitForSeconds(0.2f);
+        if (mage != null)
+        mage.enabled = false;
+        animator.SetBool("isDead", true);
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        Time.timeScale = 0f;
+        yield return new WaitForSecondsRealtime(0.05f);
+        Time.timeScale = 1f;
+        yield return new WaitForSecondsRealtime(0.15f);
+        animator.SetBool("hurt", false);
+    }
+    public void DestroyMage() => Destroy(gameObject);
+}
+using UnityEngine;
+
+public class Mage : MonoBehaviour
+{
+    [Header("Configuración")]
+    public GameObject bulletPrefab;
+    public Transform firePoint;
+    public float fireCooldown = 2f;
+    public int damage = 1;
+    private float lastShootTime;
+    private Transform playerTarget;
+
+    void Start()
+    {
+        playerTarget = GameObject.FindGameObjectWithTag("Player")?.transform;
+    }
+
+    void Update()
+    {
+        if (playerTarget == null) return;
+
+        HandleRotation();
+
+        if (Time.time >= lastShootTime + fireCooldown)
+        {
+            Shoot();
+            lastShootTime = Time.time;
+        }
+    }
+
+    void HandleRotation()
+    {
+        Vector3 direction = playerTarget.position - transform.position;
+        transform.localScale = new Vector3(
+            Mathf.Sign(direction.x),
+            1f,
+            1f
+        );
+    }
+
+    void Shoot()
+    {
+        GameObject bullet = Instantiate(bulletPrefab, firePoint.position, Quaternion.identity);
+        MageBullet homing = bullet.GetComponent<MageBullet>();
+
+        if (homing != null)
+        {
+            homing.target = playerTarget;
+        }
+    }
+
+}using UnityEngine;
+
+public class DamageCollision : MonoBehaviour
+{
+    public int damage = 1;
+    public float damageCooldown = 1f;
+    private float nextDamageTime = 0f;
+
+    private void OnCollisionStay2D(Collision2D collision)
+    {
+        if (!this.enabled) return;
+
+        if (collision.collider.CompareTag("Player"))
+        {
+            if (Time.time >= nextDamageTime)
+            {
+                collision.collider.GetComponent<PlayerHealth>()?.TakeDamage(damage);
+                Debug.Log("Daño aplicado al jugador (Stay)");
+                nextDamageTime = Time.time + damageCooldown;
+            }
+        }
+    }
+
+    private void OnCollisionEnter2D(Collision2D collision)
+    {
+        if (!this.enabled) return;
+
+        if (collision.collider.CompareTag("Player"))
+        {
+            if (Time.time >= nextDamageTime)
+            {
+                collision.collider.GetComponent<PlayerHealth>()?.TakeDamage(damage);
+                Debug.Log("Daño aplicado al jugador (Enter)");
+                nextDamageTime = Time.time + damageCooldown;
+            }
+        }
+    }
+}
+using UnityEngine;
+using Unity.Cinemachine;
+using System.Collections;
+public class BossHealth : MonoBehaviour
+{
+    public Rigidbody2D rb;
+    public int maxHealth = 150;
+    public int currentHealth = 150;
+    public Animator animator;
+    public DialogueBoss dialogueBoss;
+    public bool waitingToDie = false;
+    public bool isDead = false;
+    public Dialogue dialogue;
+    private CinemachineImpulseSource impulseSource;
+    private Vector3 direction;
+    public Animator headAnimator;
+
+    void Start()
+    {
+        currentHealth = Mathf.Min(currentHealth, maxHealth);
+        rb = GetComponent<Rigidbody2D>();
+        impulseSource = GetComponent<CinemachineImpulseSource>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        if (isDead) return;
+
+        currentHealth -= amount;
+        currentHealth = Mathf.Max(currentHealth, 0);
+        Debug.Log("Boss Health: " + currentHealth);
+        StartCoroutine(HurtSequence());
+        if (currentHealth == 0)
+        {
+            if (dialogue.BossDialogue == true)
+            {
+                if (dialogueBoss != null && !dialogueBoss.didDialogueStart)
+                {
+                    Debug.Log("Boss is dead, starting dialogue");
+                    dialogueBoss.StartDialogue();
+                    waitingToDie = true;
+                }
+                else if (!waitingToDie)
+                {
+                    Debug.Log("Dialogue is finish");
+                    Die();
+                }
+            }
+            else
+            {
+                Debug.Log("Boss is dead, no dialogue");
+                Die();
+            }
+        }
+    }
+
+    public void Die()
+    {
+        direction = new Vector3(1, 1, 1);
+        if (isDead) return;
+        animator.updateMode = AnimatorUpdateMode.UnscaledTime;
+        isDead = true;
+        rb.bodyType = RigidbodyType2D.Static;
+        animator.SetBool("Dead", true);
+        Debug.Log("Boss is dead");
+    }
+    private IEnumerator HurtSequence()
+    {
+        animator.SetBool("hurt", true);
+        headAnimator.SetBool("hurt", true);
+        yield return null;
+        animator.SetBool("hurt", false);
+        headAnimator.SetBool("hurt", false);
+    }
+    private void DieShake()
+    {
+        ScreenShakeManager.instance.TriggerShake(impulseSource, direction, 0.15f);
+    }
+    public void DestroyBoss()
+    {
+        Destroy(gameObject);
+    }
+}
+using UnityEngine;
+
+public class HeadAnimationControler : MonoBehaviour
+{
+    public BossHealth bossHealth;
+    public GameObject Boss;
+    public Animator animator;
+    public GameObject Head;
+
+    void Start()
+    {
+        animator = GetComponent<Animator>();
+    }
+
+    void Update()
+    {
+        if (!bossHealth.isDead)
+        {
+            IsAngry();
+        }
+
+        if (bossHealth.isDead)
+        {
+            animator.SetBool("Dead", true);
+            Debug.Log("Head is dead");
+        }
+    }
+
+    void IsAngry()
+    {
+        if (bossHealth.currentHealth <= 75)
+        {
+            animator.SetBool("Angry", true);
+            Debug.Log("Boss is angry");
+        }
+    }
+
+    public void DestroyHead()
+    {
+        Destroy(Head);
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class BossAttacksManager : MonoBehaviour
+{
+    public BombsAttack BombsAttack;
+    public LasersAttack LasersAttack;
+    public BulletBossAttack BulletBossAttack;
+    public EnemySpawnAttack EnemySpawnAttack;
+
+    public int Attacks = 1;
+    public int Attacks2 = 5;
+    private int AttackNumber;
+    private bool isAttacking = false;
+    public bool playerDetected = false; 
+    public BossHealth bossHealth;
+    private float attacksCooldown;
+
+    private Coroutine currentAttackCoroutine;
+
+    private void Start()
+    {
+        attacksCooldown = 4;
+    }
+    void Udpate()
+    {
+        if (bossHealth.currentHealth >= 75)
+        {
+            attacksCooldown = 3;
+        }
+    }
+    void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player") && !playerDetected && bossHealth.currentHealth > 0)
+        {
+            playerDetected = true;
+            StartCoroutine(StartAttacksWithDelay());
+        }
+    }
+
+    private IEnumerator StartAttacksWithDelay()
+    {
+        yield return new WaitForSeconds(2f); // Initial delay before starting attacks
+
+        if (bossHealth.currentHealth > 0) // Check if the boss is still alive
+        {
+            StartNewAttack();
+        }
+    }
+
+    public int RandomNumberGenerator()
+    {
+        return Random.Range(Attacks, Attacks2); // Random attack type
+    }
+
+    public void StartNewAttack()
+    {
+        if (isAttacking || bossHealth.currentHealth <= 0) return; // Prevent multiple attacks or attacks if boss is dead
+
+        isAttacking = true;
+        AttackNumber = RandomNumberGenerator();
+
+        if (currentAttackCoroutine != null)
+        {
+            StopCoroutine(currentAttackCoroutine);
+        }
+
+        switch (AttackNumber)
+        {
+            case 1:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(BombsAttack.StartBombsAttack));
+                break;
+            case 2:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(LasersAttack.StartLaser));
+                break;
+            case 3:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(BulletBossAttack.StartBulletAttack));
+                break;
+            case 4:
+                currentAttackCoroutine = StartCoroutine(ExecuteAttack(EnemySpawnAttack.StartEnemySpawn));
+                break;
+        }
+    }
+
+    private IEnumerator ExecuteAttack(System.Action attackAction)
+    {
+        attackAction.Invoke();
+        yield return new WaitForSeconds(attacksCooldown); // Cooldown between attacks
+        isAttacking = false;
+
+        if (bossHealth.currentHealth > 0) // Continue attacking if the boss is alive
+        {
+            StartNewAttack();
+        }
+    }
+}using UnityEngine;
+
+public class BombsAttack : MonoBehaviour
+{
+    public string bombPointTag = "BombPoint";
+    public GameObject bombPrefab;
+    public int minBombs = 3;
+    public int maxBombs = 6;
+    public float minDelay = 0.05f;
+    public float maxDelay = 0.2f;
+    public BossAttacksManager bossAttacksManager;
+    private Transform[] bombPoints;
+    private float NewAttackDelay = 4f;
+    public BossHealth bossHealth;
+
+    private Coroutine currentCoroutine;
+
+    void Start()
+    {
+        GameObject[] points = GameObject.FindGameObjectsWithTag(bombPointTag);
+        bombPoints = new Transform[points.Length];
+        for (int i = 0; i < points.Length; i++)
+        {
+            bombPoints[i] = points[i].transform;
+        }
+    }
+    public void StartBombsAttack()
+    {
+        if (bossHealth.currentHealth > 0) // Check boss health
+        {
+            if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+            currentCoroutine = StartCoroutine(ActivateBombs());
+        }
+    }
+    public System.Collections.IEnumerator ActivateBombs()
+    {
+        int bombsToSpawn = Random.Range(minBombs, maxBombs + 1);
+        int spawnCount = Mathf.Min(bombsToSpawn, bombPoints.Length);
+
+        Transform[] selectedPoints = SelectRandomPoints(spawnCount);
+        System.Collections.Generic.List<GameObject> spawnedBombs = new();
+
+        foreach (Transform point in selectedPoints)
+        {
+            GameObject bomb = Instantiate(bombPrefab, point.position, Quaternion.identity);
+            spawnedBombs.Add(bomb);
+            float randomDelay = Random.Range(minDelay, maxDelay);
+            yield return new WaitForSeconds(randomDelay);
+        }
+
+        yield return new WaitForSeconds(1.5f);
+
+        foreach (GameObject bomb in spawnedBombs)
+        {
+            if (bomb != null)
+            {
+                BombScript script = bomb.GetComponent<BombScript>();
+                if (script != null)
+                {
+                    script.CountingDown();
+                }
+            }
+        }
+        yield return new WaitForSeconds(NewAttackDelay);
+        bossAttacksManager.StartNewAttack();
+    }
+    private Transform[] SelectRandomPoints(int count)
+    {
+        System.Collections.Generic.List<Transform> availablePoints = new System.Collections.Generic.List<Transform>(bombPoints);
+        Transform[] selectedPoints = new Transform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = Random.Range(0, availablePoints.Count);
+            selectedPoints[i] = availablePoints[index];
+            availablePoints.RemoveAt(index);
+        }
+
+        return selectedPoints;
+    }
+}using UnityEngine;
+using UnityEngine.Tilemaps;
+
+public class BossBattle : MonoBehaviour
+{
+    public BossHealth bossHealth;
+    public Dialogue dialogue;
+    public GameObject tileMap;
+    public BossAttacksManager bossAttacksManager;
+    public GameObject NPCDead;
+    public GameObject NPC;
+    private void Start()
+    {
+        tileMap.gameObject.SetActive(false);
+        NPCDead.SetActive(false);
+    }
+    void Update()
+    {
+        if (bossHealth.currentHealth <= 0)
+        {
+            tileMap.gameObject.SetActive(false);
+        }
+        else if (dialogue.BossDialogue == true && (bossHealth.currentHealth <= 0))
+        {
+            NPCDead.SetActive(true);
+        }
+        else if (bossAttacksManager.playerDetected == true)
+        {
+            NPC.SetActive(false);
+            tileMap.gameObject.SetActive(true);
+            NPCDead.SetActive(true);
+        }
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class LasersAttack : MonoBehaviour
+{
+    public GameObject laserPrefab;  // Prefab del láser
+    public Transform[] laserPoints; // Puntos donde pueden aparecer los láseres
+    public int minLasers = 3;   // Mínimo de láseres que pueden aparecer
+    public int maxLasers = 6;   // Máximo de láseres que pueden aparecer
+    public float minDelay = 0.05f; // Tiempo mínimo de delay
+    public float maxDelay = 0.2f;  // Tiempo máximo de delay
+    public BossAttacksManager bossAttacksManager;
+    public BossHealth bossHealth;
+
+    private Coroutine currentCoroutine;
+
+    public void StartLaser()
+    {
+        if (bossHealth.currentHealth > 0) // Check boss health
+        {
+            if (currentCoroutine != null) StopCoroutine(currentCoroutine);
+            currentCoroutine = StartCoroutine(ActivateLasers());
+        }
+    }
+
+    private IEnumerator ActivateLasers()
+    {
+        int lasersToSpawn = Random.Range(minLasers, maxLasers + 1);
+        int spawnCount = Mathf.Min(lasersToSpawn, laserPoints.Length);
+
+        Transform[] selectedPoints = SelectRandomPoints(spawnCount);
+
+        foreach (Transform point in selectedPoints)
+        {
+            GameObject laser = Instantiate(laserPrefab, point.position, Quaternion.identity);
+            float randomDelay = Random.Range(minDelay, maxDelay);
+            yield return new WaitForSeconds(randomDelay);
+        }
+
+        yield return new WaitForSeconds(4f); // Cooldown
+        bossAttacksManager.StartNewAttack();
+    }
+
+    private Transform[] SelectRandomPoints(int count)
+    {
+        System.Collections.Generic.List<Transform> availablePoints = new System.Collections.Generic.List<Transform>(laserPoints);
+        Transform[] selectedPoints = new Transform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            int index = Random.Range(0, availablePoints.Count);
+            selectedPoints[i] = availablePoints[index];
+            availablePoints.RemoveAt(index);
+        }
+
+        return selectedPoints;
+    }
+}

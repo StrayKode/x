@@ -1,0 +1,566 @@
+using UnityEngine;
+using System.Collections;
+using TMPro;
+using UnityEngine.SceneManagement;
+using UnityEngine.Localization;
+
+public class Dialogue : MonoBehaviour
+{
+    [SerializeField] private GameObject dialogueMark;
+    [SerializeField] private LocalizedString[] localizedDialogueLines;
+    [SerializeField] private GameObject dialoguePanel;
+    [SerializeField] private TMP_Text dialogueText;
+    [SerializeField] private GameObject runParticles;
+    private bool isPlayerInRange;
+    private bool didDialogueStart;
+    private int lineIndex;
+    private float typingTime = 0.05f;
+    public PlayerController playerController;
+    public bool BossDialogue;
+    [SerializeField] private Bullet bullet;
+    [SerializeField] private Animator playerAnimator;
+
+    private void Start()
+    {
+        playerController.playerHasGun = false;
+        BossDialogue = PlayerPrefs.GetInt("BossDialogue", 0) == 1;
+        bullet.Damage = BossDialogue ? 2 : 1;
+    }
+
+    void Update()
+    {
+        if (isPlayerInRange && Input.GetButtonDown("Fire1"))
+        {
+            if (!didDialogueStart)
+            {
+                StartDialogue();
+            }
+            else if (dialogueText.text == GetCurrentText())
+            {
+                NextDialogueLine();
+            }
+            else
+            {
+                StopAllCoroutines();
+                dialogueText.text = GetCurrentText();
+            }
+        }
+    }
+
+    private void OnTriggerEnter2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            isPlayerInRange = true;
+            dialogueMark.SetActive(true);
+        }
+    }
+
+    private void OnTriggerExit2D(Collider2D collision)
+    {
+        if (collision.CompareTag("Player"))
+        {
+            dialogueMark.SetActive(false);
+            isPlayerInRange = false;
+        }
+    }
+
+    private void StartDialogue()
+    {
+        didDialogueStart = true;
+        dialoguePanel.SetActive(true);
+        dialogueMark.SetActive(false);
+        lineIndex = 0;
+        runParticles.SetActive(false);
+        StartCoroutine(ShowLine());
+        playerController.enabled = false;
+        playerAnimator.SetBool("running", false);
+    }
+
+    private IEnumerator ShowLine()
+    {
+        dialogueText.text = string.Empty;
+
+        string currentLine = null;
+        localizedDialogueLines[lineIndex].StringChanged += (translatedText) => currentLine = translatedText;
+        localizedDialogueLines[lineIndex].RefreshString();
+
+        yield return new WaitUntil(() => currentLine != null);
+
+        foreach (char ch in currentLine)
+        {
+            dialogueText.text += ch;
+            yield return new WaitForSecondsRealtime(typingTime);
+        }
+    }
+
+    private string GetCurrentText()
+    {
+        string text = null;
+        localizedDialogueLines[lineIndex].StringChanged += (translatedText) => text = translatedText;
+        localizedDialogueLines[lineIndex].RefreshString();
+        return text ?? "";
+    }
+
+    private void NextDialogueLine()
+    {
+        lineIndex++;
+        if (lineIndex < localizedDialogueLines.Length)
+        {
+            StartCoroutine(ShowLine());
+        }
+        else
+        {
+            string currentScene = SceneManager.GetActiveScene().name;
+
+            if (currentScene == "Level 1")
+            {
+                playerController.playerHasGun = true;
+                playerController.shootCooldown = 0.65f;
+            }
+            else if (currentScene == "Level 2")
+            {
+                playerController.playerHasGun = true;
+                playerController.shootCooldown = 0.45f;
+            }
+            else if (currentScene == "Level 3")
+            {
+                playerController.playerHasGun = true;
+                BossDialogue = true;
+                PlayerPrefs.SetInt("BossDialogue", 1);
+                PlayerPrefs.Save();
+                bullet.Damage = 2;
+            }
+
+            didDialogueStart = false;
+            dialoguePanel.SetActive(false);
+            dialogueMark.SetActive(true);
+            playerController.enabled = true;
+        }
+    }
+}
+using UnityEngine;
+using System.Collections;
+
+public class FadeController : MonoBehaviour
+{
+    public static FadeController Instance;
+
+    [SerializeField] private CanvasGroup fadePanel;
+    [SerializeField] private float fadeDuration = 0.25f; // Duración del fade (en segundos)
+
+    private void Awake()
+    {
+        // Solo asegurarme que haya una instancia
+        if (Instance == null)
+        {
+            Instance = this;
+        }
+    }
+
+    // Llamado al inicio para poner el alpha a 0 (invisible)
+    private void Start()
+    {
+        fadePanel.alpha = 0f; // Inicialmente invisible (transparente)
+    }
+
+    // Función para hacer fade in (de 0 a 1)
+    public void FadeIn(System.Action onComplete = null)
+    {
+        StartCoroutine(FadeCoroutine(0f, 1f, onComplete)); // Aquí se hace el fade de 0 a 1
+    }
+
+    // Función para hacer fade out (de 1 a 0)
+    public void FadeOut(System.Action onComplete = null)
+    {
+        StartCoroutine(FadeCoroutine(1f, 0f, onComplete)); // Aquí se hace el fade de 1 a 0
+    }
+
+    // Coroutine que realiza el fade entre los valores de alpha
+    private IEnumerator FadeCoroutine(float startAlpha, float endAlpha, System.Action onComplete)
+    {
+        fadePanel.alpha = startAlpha;  // Set initial alpha
+
+        float timeElapsed = 0f;
+
+        while (timeElapsed < fadeDuration)
+        {
+            fadePanel.alpha = Mathf.Lerp(startAlpha, endAlpha, timeElapsed / fadeDuration); // Interpola entre 0 y 1
+            timeElapsed += Time.deltaTime;
+            yield return null;
+        }
+
+        fadePanel.alpha = endAlpha;  // Asegura que se haya llegado al valor final
+
+        onComplete?.Invoke();  // Ejecutar el callback si se pasa uno
+    }
+}
+using TMPro;
+using UnityEngine;
+using UnityEngine.Localization.Settings;
+using System.Collections;
+
+public class DropdownLanguage : MonoBehaviour
+{
+    public TMP_Dropdown dropdown;
+    private bool active = false;
+
+    void Start()
+    {
+        dropdown.onValueChanged.AddListener(OnDropdownValueChanged);
+    }
+
+    private void Update()
+    {
+        // Obtenemos el índice actual del idioma seleccionado
+        int currentLocaleIndex = LocalizationSettings.AvailableLocales.Locales.IndexOf(LocalizationSettings.SelectedLocale);
+
+        // Actualizamos visualmente el dropdown si es necesario
+        if (dropdown.value != currentLocaleIndex)
+        {
+            dropdown.value = currentLocaleIndex;
+            dropdown.RefreshShownValue();
+        }
+    }
+
+    private void OnDropdownValueChanged(int index)
+    {
+        // Guardamos la selección y cambiamos el idioma
+        PlayerPrefs.SetInt("LanguageKey", index);
+        ChangeLanguage(index);
+    }
+
+    private void ChangeLanguage(int localeID)
+    {
+        if (active)
+            return;
+
+        StartCoroutine(SetLocale(localeID));
+    }
+
+    private IEnumerator SetLocale(int localeID)
+    {
+        active = true;
+        yield return LocalizationSettings.InitializationOperation;
+
+        if (localeID >= 0 && localeID < LocalizationSettings.AvailableLocales.Locales.Count)
+        {
+            LocalizationSettings.SelectedLocale = LocalizationSettings.AvailableLocales.Locales[localeID];
+        }
+
+        active = false;
+    }
+}
+using UnityEngine;
+using Unity.Cinemachine;
+
+public class ScreenShakeManager : MonoBehaviour
+{
+    public static ScreenShakeManager instance;
+    [SerializeField] private float shakeForce = 0.1f;
+    private CinemachineImpulseSource impulseSource;
+    private Vector3 direction;
+    private void Awake()
+    {
+        if (instance == null)
+        {
+            instance = this;
+        }
+
+        impulseSource = GetComponent<CinemachineImpulseSource>();
+    }
+
+    public void TriggerShake(CinemachineImpulseSource impulseSource, Vector3 direction, float force)
+    {
+        impulseSource.GenerateImpulse(direction * force);
+    }
+}
+using TMPro;
+using UnityEngine;
+using UnityEngine.Localization;
+using UnityEngine.Localization.Settings;
+using UnityEngine.SceneManagement;
+using System.Collections;
+
+public class DialogueBoss : MonoBehaviour
+{
+    [SerializeField] private LocalizedString[] localizedDialogueLines;
+    [SerializeField] private GameObject dialoguePanel;
+    [SerializeField] private TMP_Text dialogueText;
+    [SerializeField] private BossHealth bossHealth;
+
+    private int lineIndex;
+    private float typingTime = 0.05f;
+    public bool didDialogueStart;
+
+    public void StartDialogue()
+    {
+        dialoguePanel.SetActive(true);
+        lineIndex = 0;
+        Time.timeScale = 0f;
+        bossHealth.waitingToDie = true;
+        didDialogueStart = true;
+        StartCoroutine(ShowLine());
+    }
+
+    private IEnumerator ShowLine()
+    {
+        dialogueText.text = string.Empty;
+
+        // Espera hasta que el LocalizedString se haya cargado
+        var getLocalized = localizedDialogueLines[lineIndex].GetLocalizedStringAsync();
+        yield return getLocalized;
+
+        string line = getLocalized.Result;
+
+        foreach (char ch in line)
+        {
+            dialogueText.text += ch;
+            yield return new WaitForSecondsRealtime(typingTime);
+        }
+
+        yield return new WaitForSecondsRealtime(1f);
+        NextDialogueLine();
+    }
+
+    private void NextDialogueLine()
+    {
+        lineIndex++;
+        if (lineIndex < localizedDialogueLines.Length)
+        {
+            StartCoroutine(ShowLine());
+        }
+        else
+        {
+            dialoguePanel.SetActive(false);
+            Time.timeScale = 1f;
+            bossHealth.waitingToDie = false;
+            bossHealth.Die();
+            Debug.Log("Dialogue finished, boss is dead");
+        }
+    }
+}
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+public class MainMenu : MonoBehaviour
+{
+    [SerializeField] private GameObject mainMenuPanel;
+    [SerializeField] private GameObject settingsPanel;
+    [SerializeField] private GameObject selectGameMode;
+    [SerializeField] private GameDataManager gameDataManager;
+    [SerializeField] private GameObject selectGameSave;
+    [SerializeField] private GameObject selectLanguage;
+
+    public void Settings()
+    {
+        mainMenuPanel.SetActive(false);
+        settingsPanel.SetActive(true);
+    }
+
+    public void SelectGameMode()
+    {
+        mainMenuPanel.SetActive(false);
+        selectGameMode.SetActive(true);
+    }
+
+    public void ExitSelectMode()
+    {
+        mainMenuPanel.SetActive(true);
+        selectGameMode.SetActive(false);
+    }
+    public void ExitGame()
+    {
+        Application.Quit();
+    }
+    public void ExitSettings()
+    {
+        mainMenuPanel.SetActive(true);
+        settingsPanel.SetActive(false);
+    }
+    public void SelectGameSave()
+    {
+        selectGameMode.SetActive(false);
+        selectGameSave.SetActive(true);
+    }
+    public void ExitSelectGameSave()
+    {
+        selectGameMode.SetActive(true);
+        selectGameSave.SetActive(false);
+    }
+    public void SelectLanguage()
+    {
+        settingsPanel.SetActive(false);
+        selectLanguage.SetActive(true);
+    }
+    public void ExitLanguage()
+    {
+        settingsPanel.SetActive(true);
+        selectLanguage.SetActive(false);
+    }
+    public void NewGame()
+    {
+        SceneManager.LoadScene("Level 1");
+        PlayerPrefs.SetInt("HasGun", 0);
+        PlayerPrefs.SetInt("BossDialogue", 0);
+    }
+    public void ContinueGame()
+    {
+        gameDataManager.LoadData();
+    }
+}
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using System.Collections;
+public class PauseMenu : MonoBehaviour
+{
+    public GameObject pauseMenuUI;
+    public GameDataManager gameDataManager;
+    public GameObject hearthsPanel;
+    public GameObject gameOverPanel;
+    public GameObject settingsPanel;
+    public PlayerHealth playerHealth;
+    public Rigidbody2D rb;
+    public Dialogue dialogue;
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            if (pauseMenuUI.activeSelf)
+            {
+                pauseMenuUI.SetActive(false);
+                hearthsPanel.SetActive(true);
+                StartCoroutine(InvulnerablityTime());
+                rb.bodyType = RigidbodyType2D.Dynamic;
+
+            }
+            else
+            {
+                pauseMenuUI.SetActive(true);
+                hearthsPanel.SetActive(false);
+                gameOverPanel.SetActive(false);
+                rb.bodyType = RigidbodyType2D.Static;
+                playerHealth.isInvulnerable = true;
+            }
+        }
+    }
+
+
+    public void Continue()
+    {
+        pauseMenuUI.SetActive(false);
+        StartCoroutine(InvulnerablityTime());
+        rb.bodyType = RigidbodyType2D.Dynamic;
+    }
+
+    public void MainMenu()
+    {
+        SceneManager.LoadScene("Main Menu");
+    }
+    public void Quit()
+    {
+        Application.Quit();
+    }
+    public void Settings()
+    {
+        settingsPanel.SetActive(true);
+        pauseMenuUI.SetActive(false);
+        playerHealth.isInvulnerable = true;
+    }
+    public void ExitSettings()
+    {
+        settingsPanel.SetActive(false);
+        pauseMenuUI.SetActive(true);
+        playerHealth.isInvulnerable = true;
+        rb.bodyType = RigidbodyType2D.Static;
+    }
+    private IEnumerator InvulnerablityTime()
+    {
+        yield return new WaitForSeconds(0.5f);
+        playerHealth.isInvulnerable = false;
+        rb.bodyType = RigidbodyType2D.Dynamic;
+    }
+}
+using UnityEngine;
+
+public class HeartUIManager : MonoBehaviour
+{
+    public GameObject heartFull1, heartFull2, heartFull3;
+    public GameObject heartHalf1, heartHalf2, heartHalf3;
+    public GameObject heartEmpty1, heartEmpty2, heartEmpty3;
+
+    public PlayerHealth playerHealth;
+
+    void Update()
+    {
+        UpdateHearts();
+    }
+
+    void UpdateHearts()
+    {
+        if (playerHealth == null) return;
+
+        int currentHealth = playerHealth.GetCurrentHealth();
+
+        // Heart 1
+        if (currentHealth >= 6)
+        {
+            heartFull1.SetActive(true);
+            heartHalf1.SetActive(false);
+            heartEmpty1.SetActive(false);
+        }
+        else if (currentHealth == 5)
+        {
+            heartFull1.SetActive(false);
+            heartHalf1.SetActive(true);
+            heartEmpty1.SetActive(false);
+        }
+        else
+        {
+            heartFull1.SetActive(false);
+            heartHalf1.SetActive(false);
+            heartEmpty1.SetActive(true);
+        }
+
+        // Heart 2
+        if (currentHealth >= 4)
+        {
+            heartFull2.SetActive(true);
+            heartHalf2.SetActive(false);
+            heartEmpty2.SetActive(false);
+        }
+        else if (currentHealth == 3)
+        {
+            heartFull2.SetActive(false);
+            heartHalf2.SetActive(true);
+            heartEmpty2.SetActive(false);
+        }
+        else
+        {
+            heartFull2.SetActive(false);
+            heartHalf2.SetActive(false);
+            heartEmpty2.SetActive(true);
+        }
+
+        // Heart 3
+        if (currentHealth >= 2)
+        {
+            heartFull3.SetActive(true);
+            heartHalf3.SetActive(false);
+            heartEmpty3.SetActive(false);
+        }
+        else if (currentHealth == 1)
+        {
+            heartFull3.SetActive(false);
+            heartHalf3.SetActive(true);
+            heartEmpty3.SetActive(false);
+        }
+        else
+        {
+            heartFull3.SetActive(false);
+            heartHalf3.SetActive(false);
+            heartEmpty3.SetActive(true);
+        }
+    }
+}
